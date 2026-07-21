@@ -1,0 +1,6 @@
+rootProject.name = 'pacing-service'
+
+include 'pacing-core'
+include 'pacing-api'
+include 'pacing-worker'
+include 'pacing-infrastructure'
