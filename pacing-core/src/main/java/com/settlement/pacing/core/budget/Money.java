@@ -35,4 +35,14 @@ public record Money(long amount) {
         Objects.requireNonNull(money, "비교할 금액은 null일 수 없습니다");
         return this.amount >= money.amount;
     }
+
+    public Money min(Money money) {
+        Objects.requireNonNull(money, "비교할 금액은 null일 수 없습니다");
+
+        return this.amount <= money.amount ? this : money;
+    }
+
+    public boolean isZero() {
+        return amount == 0L;
+    }
 }

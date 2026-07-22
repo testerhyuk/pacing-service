@@ -10,8 +10,7 @@ class AsapPacingPolicyTest {
         PacingContext context = new PacingContext(
                 new Rate(0.6),
                 new Rate(0.4),
-                new Rate(0.2),
-                TrafficPeriod.NORMAL
+                new Rate(0.2)
         );
 
         AsapPacingPolicy policy = new AsapPacingPolicy();

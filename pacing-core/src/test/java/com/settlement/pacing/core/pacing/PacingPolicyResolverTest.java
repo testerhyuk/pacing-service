@@ -9,10 +9,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class PacingPolicyResolverTest {
     private final PacingPolicy evenPacingPolicy = new EvenPacingPolicy();
 
-    private final PacingPolicy peakWeightedPacingPolicy =
-            new PeakWeightedPacingPolicy(
-                    new TrafficWeight(0.5, 1.5)
-            );
+    private final PacingPolicy peakWeightedPacingPolicy = new PeakWeightedPacingPolicy();
 
     private final PacingPolicy asapPacingPolicy = new AsapPacingPolicy();
 

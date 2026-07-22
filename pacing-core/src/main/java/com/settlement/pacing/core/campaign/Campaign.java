@@ -21,13 +21,29 @@ public record Campaign(
         }
     }
 
-    public boolean isActiveAt(Instant now) {
+    /**
+     * 캠페인이 현재 집행 가능한 상태인지 확인한다.
+     */
+    public boolean isActive() {
+        return status == CampaignStatus.ACTIVE;
+    }
+
+    /**
+     * 주어진 시각이 캠페인 집행 기간에 포함되는지 확인한다.
+     */
+    public boolean isWithinPeriodAt(Instant now) {
         if (now == null) {
             throw new IllegalArgumentException("현재 시각은 null일 수 없습니다");
         }
 
-        return status == CampaignStatus.ACTIVE
-                && !now.isBefore(startAt)
+        return !now.isBefore(startAt)
                 && now.isBefore(endAt);
+    }
+
+    /**
+     * 캠페인 상태와 집행 기간을 모두 확인한다.
+     */
+    public boolean isActiveAt(Instant now) {
+        return isActive() && isWithinPeriodAt(now);
     }
 }

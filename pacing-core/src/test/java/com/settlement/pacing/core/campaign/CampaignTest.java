@@ -28,6 +28,8 @@ class CampaignTest {
         );
 
         assertThat(campaign.isActiveAt(startAt)).isTrue();
+        assertThat(campaign.isActive()).isTrue();
+        assertThat(campaign.isWithinPeriodAt(startAt)).isTrue();
     }
 
     @Test
@@ -44,6 +46,8 @@ class CampaignTest {
         );
 
         assertThat(campaign.isActiveAt(endAt)).isFalse();
+        assertThat(campaign.isActive()).isTrue();
+        assertThat(campaign.isWithinPeriodAt(endAt)).isFalse();
     }
 
     @Test
@@ -59,5 +63,7 @@ class CampaignTest {
         Instant now = Instant.parse("2026-07-21T12:00:00Z");
 
         assertThat(campaign.isActiveAt(now)).isFalse();
+        assertThat(campaign.isActive()).isFalse();
+        assertThat(campaign.isWithinPeriodAt(now)).isTrue();
     }
 }

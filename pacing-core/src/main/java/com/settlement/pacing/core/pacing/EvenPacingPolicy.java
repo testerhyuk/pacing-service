@@ -11,6 +11,6 @@ public class EvenPacingPolicy implements PacingPolicy {
             return PacingDecision.pass(context.pacingRate());
         }
 
-        return PacingDecision.block();
+        return PacingDecision.block(context.pacingRate());
     }
 }
