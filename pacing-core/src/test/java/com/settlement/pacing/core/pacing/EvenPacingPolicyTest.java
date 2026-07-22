@@ -10,8 +10,7 @@ class EvenPacingPolicyTest {
         PacingContext context = new PacingContext(
                 new Rate(0.6),
                 new Rate(0.4),
-                new Rate(0.7),
-                TrafficPeriod.NORMAL
+                new Rate(0.7)
         );
 
         EvenPacingPolicy policy = new EvenPacingPolicy();
@@ -19,6 +18,7 @@ class EvenPacingPolicyTest {
         PacingDecision decision = policy.decide(context, new Rate(0.4));
 
         assertThat(decision.isPass()).isTrue();
+        assertThat(decision.pacingRate()).isEqualTo(new Rate(0.7));
     }
 
     @Test
@@ -26,8 +26,7 @@ class EvenPacingPolicyTest {
         PacingContext context = new PacingContext(
                 new Rate(0.6),
                 new Rate(0.4),
-                new Rate(0.7),
-                TrafficPeriod.NORMAL
+                new Rate(0.7)
         );
 
         EvenPacingPolicy policy = new EvenPacingPolicy();
@@ -42,8 +41,7 @@ class EvenPacingPolicyTest {
         PacingContext context = new PacingContext(
                 new Rate(0.6),
                 new Rate(0.4),
-                new Rate(0.7),
-                TrafficPeriod.NORMAL
+                new Rate(0.7)
         );
 
         EvenPacingPolicy policy = new EvenPacingPolicy();
