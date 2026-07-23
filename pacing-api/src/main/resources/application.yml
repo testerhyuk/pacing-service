@@ -1,0 +1,43 @@
+pacing:
+  business-zone-id: Asia/Seoul
+  rate-update-interval: 10s
+  adjustment-gain: 0.2
+  reservation-ttl: 5m
+  state-update-max-retries: 3
+
+  initial-rate:
+    even: 0.1
+    peak-weighted: 0.1
+    asap: 1.0
+
+  peak:
+    start-time: "18:00"
+    end-time: "23:00"
+    zone-id: Asia/Seoul
+    normal-weight: 0.5
+    peak-weight: 1.5
+
+  security:
+    hmac:
+      timestamp-tolerance: 60s
+      nonce-ttl: 2m
+
+      clients:
+        ad-server:
+          current-secret-key: ${PACING_HMAC_AD_SERVER_CURRENT_SECRET}
+          previous-secret-key: ${PACING_HMAC_AD_SERVER_PREVIOUS_SECRET:}
+          permissions:
+            - PACING_DECIDE
+            - BUDGET_RESERVE
+
+        auction-server:
+          current-secret-key: ${PACING_HMAC_AUCTION_SERVER_CURRENT_SECRET}
+          previous-secret-key: ${PACING_HMAC_AUCTION_SERVER_PREVIOUS_SECRET:}
+          permissions:
+            - BUDGET_RESERVE
+
+        operation-server:
+          current-secret-key: ${PACING_HMAC_OPERATION_SERVER_CURRENT_SECRET}
+          previous-secret-key: ${PACING_HMAC_OPERATION_SERVER_PREVIOUS_SECRET:}
+          permissions:
+            - ADMIN
