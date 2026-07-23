@@ -35,3 +35,31 @@ out/
 
 ### VS Code ###
 .vscode/
+
+### Local environment and secrets ###
+.env
+.env.*
+!.env.example
+**/application-local.yml
+**/application-local.yaml
+**/application-secret.yml
+**/application-secret.yaml
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+### Runtime files ###
+*.log
+logs/
+*.pid
+*.hprof
+hs_err_pid*
+replay_pid*
+
+### OS files ###
+.DS_Store
+Thumbs.db
+Desktop.ini
