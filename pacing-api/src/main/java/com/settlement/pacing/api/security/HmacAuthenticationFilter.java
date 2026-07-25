@@ -11,11 +11,12 @@ import jakarta.servlet.ServletInputStream;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletRequestWrapper;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.dao.DataAccessException;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.http.HttpStatus;
 import org.springframework.web.filter.OncePerRequestFilter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -164,11 +165,22 @@ public class HmacAuthenticationFilter
             return;
         }
 
-        boolean nonceSaved = nonceStore.saveIfAbsent(
-                clientId,
-                nonce,
-                properties.nonceTtl()
-        );
+        boolean nonceSaved;
+        try {
+            nonceSaved = nonceStore.saveIfAbsent(
+                    clientId,
+                    nonce,
+                    properties.nonceTtl()
+            );
+        } catch (DataAccessException exception) {
+            rejectStorageUnavailable(
+                    request,
+                    response,
+                    "nonce 저장소",
+                    exception
+            );
+            return;
+        }
 
         if (!nonceSaved) {
             reject(
@@ -181,7 +193,21 @@ public class HmacAuthenticationFilter
             return;
         }
 
-        if (!clientRateLimiter.tryAcquire(clientId)) {
+        boolean rateLimitAllowed;
+        try {
+            rateLimitAllowed =
+                    clientRateLimiter.tryAcquire(clientId);
+        } catch (DataAccessException exception) {
+            rejectStorageUnavailable(
+                    request,
+                    response,
+                    "Rate Limit 저장소",
+                    exception
+            );
+            return;
+        }
+
+        if (!rateLimitAllowed) {
             metrics.recordRateLimitRejection(clientId);
             errorResponseWriter.write(
                     response,
@@ -319,6 +345,26 @@ public class HmacAuthenticationFilter
                     exception
             );
         }
+    }
+
+    private void rejectStorageUnavailable(
+            HttpServletRequest request,
+            HttpServletResponse response,
+            String storageName,
+            DataAccessException exception
+    ) throws IOException {
+        log.error(
+                "{} 연결 오류로 HMAC 인증 요청을 처리할 수 없습니다",
+                storageName,
+                exception
+        );
+        errorResponseWriter.write(
+                response,
+                HttpStatus.SERVICE_UNAVAILABLE,
+                ErrorCode.STORAGE_UNAVAILABLE,
+                "인증 상태 저장소를 사용할 수 없습니다",
+                request.getRequestURI()
+        );
     }
 
     private boolean isBlank(String value) {

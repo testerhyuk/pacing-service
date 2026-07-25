@@ -11,6 +11,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
@@ -387,6 +388,67 @@ class HmacAuthenticationFilterTest {
                 ErrorCode.RATE_LIMIT_EXCEEDED,
                 "요청 허용량을 초과했습니다",
                 PATH
+        );
+    }
+
+    @Test
+    void nonce_저장소_장애는_503으로_응답한다()
+            throws Exception {
+        when(nonceStore.saveIfAbsent(
+                CLIENT_ID,
+                NONCE,
+                Duration.ofMinutes(2)
+        )).thenThrow(new DataAccessResourceFailureException(
+                "Redis unavailable"
+        ));
+        MockHttpServletResponse response =
+                new MockHttpServletResponse();
+
+        filter.doFilter(
+                signedRequest(),
+                response,
+                filterChain
+        );
+
+        assertThat(response.getStatus()).isEqualTo(503);
+        verify(errorResponseWriter).write(
+                response,
+                HttpStatus.SERVICE_UNAVAILABLE,
+                ErrorCode.STORAGE_UNAVAILABLE,
+                "인증 상태 저장소를 사용할 수 없습니다",
+                PATH
+        );
+        verify(clientRateLimiter, never())
+                .tryAcquire(anyString());
+    }
+
+    @Test
+    void Rate_Limit_저장소_장애는_503으로_응답한다()
+            throws Exception {
+        when(clientRateLimiter.tryAcquire(CLIENT_ID))
+                .thenThrow(new DataAccessResourceFailureException(
+                        "Redis unavailable"
+                ));
+        MockHttpServletResponse response =
+                new MockHttpServletResponse();
+
+        filter.doFilter(
+                signedRequest(),
+                response,
+                filterChain
+        );
+
+        assertThat(response.getStatus()).isEqualTo(503);
+        verify(errorResponseWriter).write(
+                response,
+                HttpStatus.SERVICE_UNAVAILABLE,
+                ErrorCode.STORAGE_UNAVAILABLE,
+                "인증 상태 저장소를 사용할 수 없습니다",
+                PATH
+        );
+        verify(filterChain, never()).doFilter(
+                any(),
+                any()
         );
     }
 
