@@ -31,6 +31,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -107,6 +108,10 @@ class InfrastructureIntegrationTest {
                 "spring.data.redis.port",
                 () -> REDIS.getMappedPort(6379)
         );
+        registry.add(
+                "spring.data.redis.password",
+                () -> ""
+        );
     }
 
     @Autowired
@@ -138,6 +143,9 @@ class InfrastructureIntegrationTest {
 
     @Autowired
     private RedisKeyFactory keyFactory;
+
+    @Autowired
+    private Clock clock;
 
     @Test
     void 자동_설정으로_모든_API_포트가_조립된다() {
@@ -302,6 +310,156 @@ class InfrastructureIntegrationTest {
     }
 
     @Test
+    void 서로_다른_캠페인이_같은_예약_ID를_사용하면_후속_예약을_보정한다() {
+        String firstCampaignId = "campaign-global-id-first";
+        String secondCampaignId = "campaign-global-id-second";
+        String reservationId = "global-reservation-id";
+        insertCampaign(firstCampaignId, 1_000L, 500L);
+        insertCampaign(secondCampaignId, 1_000L, 500L);
+
+        ReservationExecutionResult first =
+                budgetReservationGateway.reserve(reservation(
+                        reservationId,
+                        firstCampaignId,
+                        100L
+                ));
+        ReservationExecutionResult conflict =
+                budgetReservationGateway.reserve(reservation(
+                        reservationId,
+                        secondCampaignId,
+                        100L
+                ));
+
+        assertThat(first.status())
+                .isEqualTo(ReservationExecutionStatus.CREATED);
+        assertThat(conflict.status())
+                .isEqualTo(ReservationExecutionStatus.CONFLICT);
+
+        BudgetState secondState = budgetStateQueryGateway.find(
+                secondCampaignId,
+                BUDGET_DATE
+        ).orElseThrow();
+        assertThat(secondState.totalReservedAmount())
+                .isEqualTo(Money.zero());
+        assertThat(secondState.dailyReservedAmount())
+                .isEqualTo(Money.zero());
+        assertThat(redisTemplate.hasKey(
+                keyFactory.reservation(
+                        secondCampaignId,
+                        reservationId
+                )
+        )).isFalse();
+    }
+
+    @Test
+    void Redis_예산_상태가_유실되면_예약_이력까지_포함해_복구한다() {
+        String campaignId = "campaign-recovery-with-reservation";
+        insertCampaign(campaignId, 1_000L, 500L);
+
+        BudgetReservation reservation = reservation(
+                "reservation-for-recovery",
+                campaignId,
+                300L
+        );
+        assertThat(budgetReservationGateway.reserve(reservation)
+                .status()).isEqualTo(
+                ReservationExecutionStatus.CREATED
+        );
+
+        redisTemplate.delete(List.of(
+                keyFactory.totalBudget(campaignId),
+                keyFactory.dailyBudget(campaignId, BUDGET_DATE),
+                keyFactory.reservation(
+                        campaignId,
+                        reservation.reservationId()
+                ),
+                keyFactory.reservationExpiry(campaignId)
+        ));
+
+        BudgetState recovered = budgetStateQueryGateway.find(
+                campaignId,
+                BUDGET_DATE
+        ).orElseThrow();
+
+        assertThat(recovered.totalReservedAmount())
+                .isEqualTo(new Money(300L));
+        assertThat(recovered.dailyReservedAmount())
+                .isEqualTo(new Money(300L));
+    }
+
+    @Test
+    void Redis_페이싱_상태가_유실되면_PostgreSQL_스냅샷으로_복구한다() {
+        String campaignId = "campaign-pacing-recovery";
+        insertCampaign(campaignId, 1_000L, 500L);
+
+        PacingStateSnapshot initial =
+                pacingStateGateway.getOrInitialize(
+                        campaignId,
+                        new PacingState(
+                                new Rate(0.1),
+                                NOW.minusSeconds(10)
+                        )
+                );
+        PacingState versionOne = new PacingState(
+                new Rate(0.2),
+                NOW
+        );
+        assertThat(pacingStateGateway.compareAndSet(
+                campaignId,
+                initial.version(),
+                versionOne
+        )).isTrue();
+
+        redisTemplate.delete(keyFactory.pacingState(campaignId));
+
+        PacingStateSnapshot recovered = pacingStateGateway
+                .findByCampaignId(campaignId)
+                .orElseThrow();
+        PacingState versionTwo = new PacingState(
+                new Rate(0.3),
+                NOW.plusSeconds(10)
+        );
+
+        assertThat(recovered.version()).isEqualTo(1L);
+        assertThat(recovered.pacingState()).isEqualTo(versionOne);
+        assertThat(pacingStateGateway.compareAndSet(
+                campaignId,
+                recovered.version(),
+                versionTwo
+        )).isTrue();
+    }
+
+    @Test
+    void Lua_예약은_double_정밀도를_넘는_금액도_정확하게_검사한다() {
+        String campaignId = "campaign-large-budget";
+        insertCampaign(
+                campaignId,
+                Long.MAX_VALUE,
+                Long.MAX_VALUE
+        );
+
+        ReservationExecutionResult almostAll =
+                budgetReservationGateway.reserve(reservation(
+                        "large-reservation-1",
+                        campaignId,
+                        Long.MAX_VALUE - 1
+                ));
+        ReservationExecutionResult overflow =
+                budgetReservationGateway.reserve(reservation(
+                        "large-reservation-2",
+                        campaignId,
+                        2L
+                ));
+
+        assertThat(almostAll.status())
+                .isEqualTo(ReservationExecutionStatus.CREATED);
+        assertThat(overflow.status())
+                .isEqualTo(
+                        ReservationExecutionStatus.INSUFFICIENT_BUDGET
+                );
+    }
+
+    @Test
     void 페이싱_상태는_version으로_CAS하고_스냅샷을_저장한다() {
         String campaignId = "campaign-pacing";
         insertCampaign(campaignId, 1_000L, 500L);
@@ -454,13 +612,15 @@ class InfrastructureIntegrationTest {
             String campaignId,
             long amount
     ) {
+        Instant reservedAt = clock.instant();
+
         return new BudgetReservation(
                 reservationId,
                 campaignId,
                 BUDGET_DATE,
                 new Money(amount),
-                NOW,
-                NOW.plus(Duration.ofMinutes(5))
+                reservedAt,
+                reservedAt.plus(Duration.ofMinutes(5))
         );
     }
 

@@ -72,7 +72,9 @@ public class SecurityConfiguration {
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers(
                                 "/actuator/health",
-                                "/actuator/health/**"
+                                "/actuator/health/**",
+                                "/actuator/info",
+                                "/actuator/prometheus"
                         ).permitAll()
                         .requestMatchers(
                                 "/internal/v1/pacing/decisions/**"

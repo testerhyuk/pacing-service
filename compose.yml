@@ -1,0 +1,147 @@
+name: pacing-service
+
+services:
+  postgres:
+    image: postgres:16.14-alpine
+    container_name: pacing-postgres
+    environment:
+      POSTGRES_DB: ${PACING_POSTGRES_DATABASE:-pacing}
+      POSTGRES_USER: ${PACING_POSTGRES_USERNAME:-pacing}
+      POSTGRES_PASSWORD: ${PACING_POSTGRES_PASSWORD:-pacing}
+      TZ: UTC
+    ports:
+      - "127.0.0.1:${PACING_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pacing-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - pacing-network
+
+  redis:
+    image: redis:7.4.9-alpine
+    container_name: pacing-redis
+    environment:
+      REDIS_PASSWORD: ${PACING_REDIS_PASSWORD:-pacing}
+      TZ: UTC
+    command:
+      - sh
+      - -c
+      - >-
+        exec redis-server
+        --appendonly yes
+        --appendfsync everysec
+        --requirepass "$${REDIS_PASSWORD}"
+    ports:
+      - "127.0.0.1:${PACING_REDIS_PORT:-6379}:6379"
+    volumes:
+      - pacing-redis-data:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - redis-cli --no-auth-warning -a "$${REDIS_PASSWORD}" ping | grep -q PONG
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+    networks:
+      - pacing-network
+
+  kafka:
+    image: apache/kafka:4.3.1
+    container_name: pacing-kafka
+    hostname: kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,HOST:PLAINTEXT
+      KAFKA_LISTENERS: CONTROLLER://:29093,INTERNAL://:19092,HOST://:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:19092,HOST://localhost:${PACING_KAFKA_PORT:-9092}
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      TZ: UTC
+    ports:
+      - "127.0.0.1:${PACING_KAFKA_PORT:-9092}:9092"
+    volumes:
+      - pacing-kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - pacing-network
+
+  prometheus:
+    image: prom/prometheus:v3.10.0
+    container_name: pacing-prometheus
+    profiles:
+      - monitoring
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:${PACING_PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - pacing-prometheus-data:/prometheus
+    restart: unless-stopped
+    networks:
+      - pacing-network
+
+  grafana:
+    image: grafana/grafana:13.1.0
+    container_name: pacing-grafana
+    profiles:
+      - monitoring
+    environment:
+      GF_SECURITY_ADMIN_USER: ${PACING_GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${PACING_GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      TZ: UTC
+    ports:
+      - "127.0.0.1:${PACING_GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - pacing-grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    networks:
+      - pacing-network
+
+volumes:
+  pacing-postgres-data:
+  pacing-redis-data:
+  pacing-kafka-data:
+  pacing-prometheus-data:
+  pacing-grafana-data:
+
+networks:
+  pacing-network:
+    driver: bridge
