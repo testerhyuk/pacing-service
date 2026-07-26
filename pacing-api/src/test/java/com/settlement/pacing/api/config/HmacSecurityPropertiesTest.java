@@ -6,6 +6,7 @@ import jakarta.validation.Validator;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Map;
 import java.util.Set;
 
@@ -28,6 +29,7 @@ class HmacSecurityPropertiesTest {
                 new HmacSecurityProperties.Client(
                         CURRENT_SECRET,
                         PREVIOUS_SECRET,
+                        Instant.parse("2026-08-01T00:00:00Z"),
                         Set.of(ClientPermission.PACING_DECIDE)
                 )
         );
@@ -43,6 +45,7 @@ class HmacSecurityPropertiesTest {
         assertThatThrownBy(() -> new HmacSecurityProperties(
                 Duration.ZERO,
                 Duration.ofMinutes(2),
+                65_536,
                 Map.of("ad-server", validClient())
         )).isInstanceOf(IllegalArgumentException.class);
     }
@@ -52,6 +55,7 @@ class HmacSecurityPropertiesTest {
         assertThatThrownBy(() -> new HmacSecurityProperties(
                 Duration.ofSeconds(60),
                 Duration.ZERO,
+                65_536,
                 Map.of("ad-server", validClient())
         )).isInstanceOf(IllegalArgumentException.class);
     }
@@ -62,6 +66,7 @@ class HmacSecurityPropertiesTest {
                 () -> new HmacSecurityProperties.Client(
                         CURRENT_SECRET,
                         CURRENT_SECRET,
+                        Instant.parse("2026-08-01T00:00:00Z"),
                         Set.of(ClientPermission.PACING_DECIDE)
                 )
         ).isInstanceOf(IllegalArgumentException.class);
@@ -72,6 +77,7 @@ class HmacSecurityPropertiesTest {
         assertThatThrownBy(
                 () -> new HmacSecurityProperties.Client(
                         "short-secret",
+                        null,
                         null,
                         Set.of(ClientPermission.PACING_DECIDE)
                 )
@@ -85,6 +91,7 @@ class HmacSecurityPropertiesTest {
                 () -> new HmacSecurityProperties.Client(
                         CURRENT_SECRET,
                         "short-secret",
+                        Instant.parse("2026-08-01T00:00:00Z"),
                         Set.of(ClientPermission.PACING_DECIDE)
                 )
         ).isInstanceOf(IllegalArgumentException.class)
@@ -97,11 +104,45 @@ class HmacSecurityPropertiesTest {
                 new HmacSecurityProperties.Client(
                         CURRENT_SECRET,
                         " ",
+                        null,
                         Set.of(ClientPermission.PACING_DECIDE)
                 );
 
-        assertThat(client.verificationKeys())
+        assertThat(client.verificationKeys(
+                Instant.parse("2026-07-26T00:00:00Z")
+        ))
                 .containsExactly(CURRENT_SECRET);
+    }
+
+    @Test
+    void 이전_키는_설정한_유효_종료_시각_전까지만_사용한다() {
+        Instant validUntil =
+                Instant.parse("2026-08-01T00:00:00Z");
+        HmacSecurityProperties.Client client =
+                new HmacSecurityProperties.Client(
+                        CURRENT_SECRET,
+                        PREVIOUS_SECRET,
+                        validUntil,
+                        Set.of(ClientPermission.PACING_DECIDE)
+                );
+
+        assertThat(client.verificationKeys(
+                validUntil.minusNanos(1)
+        )).containsExactly(CURRENT_SECRET, PREVIOUS_SECRET);
+        assertThat(client.verificationKeys(validUntil))
+                .containsExactly(CURRENT_SECRET);
+    }
+
+    @Test
+    void 이전_키에는_유효_종료_시각이_필요하다() {
+        assertThatThrownBy(() ->
+                new HmacSecurityProperties.Client(
+                        CURRENT_SECRET,
+                        PREVIOUS_SECRET,
+                        null,
+                        Set.of(ClientPermission.PACING_DECIDE)
+                )
+        ).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
@@ -110,6 +151,7 @@ class HmacSecurityPropertiesTest {
                 new HmacSecurityProperties(
                         Duration.ofSeconds(60),
                         Duration.ofMinutes(2),
+                        65_536,
                         Map.of()
                 );
 
@@ -126,6 +168,7 @@ class HmacSecurityPropertiesTest {
         HmacSecurityProperties properties = properties(
                 new HmacSecurityProperties.Client(
                         CURRENT_SECRET,
+                        null,
                         null,
                         Set.of()
                 )
@@ -145,6 +188,7 @@ class HmacSecurityPropertiesTest {
         return new HmacSecurityProperties(
                 Duration.ofSeconds(60),
                 Duration.ofMinutes(2),
+                65_536,
                 Map.of("ad-server", client)
         );
     }
@@ -152,6 +196,7 @@ class HmacSecurityPropertiesTest {
     private HmacSecurityProperties.Client validClient() {
         return new HmacSecurityProperties.Client(
                 CURRENT_SECRET,
+                null,
                 null,
                 Set.of(ClientPermission.PACING_DECIDE)
         );

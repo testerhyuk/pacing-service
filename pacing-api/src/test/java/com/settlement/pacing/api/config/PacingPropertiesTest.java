@@ -36,8 +36,9 @@ class PacingPropertiesTest {
     void 음수_재시도_횟수를_거절한다() {
         PacingProperties properties = new PacingProperties(
                 ZoneId.of("Asia/Seoul"),
+                Duration.ofSeconds(60),
                 Duration.ofSeconds(10),
-                0.2,
+                validObservation(),
                 Duration.ofMinutes(5),
                 -1,
                 validInitialRate(),
@@ -56,8 +57,9 @@ class PacingPropertiesTest {
     void 영_이하의_예약_TTL을_거절한다() {
         assertThatThrownBy(() -> new PacingProperties(
                 ZoneId.of("Asia/Seoul"),
+                Duration.ofSeconds(60),
                 Duration.ofSeconds(10),
-                0.2,
+                validObservation(),
                 Duration.ZERO,
                 3,
                 validInitialRate(),
@@ -69,8 +71,9 @@ class PacingPropertiesTest {
     void 범위를_벗어난_초기_비율을_거절한다() {
         PacingProperties properties = new PacingProperties(
                 ZoneId.of("Asia/Seoul"),
+                Duration.ofSeconds(60),
                 Duration.ofSeconds(10),
-                0.2,
+                validObservation(),
                 Duration.ofMinutes(5),
                 3,
                 new PacingProperties.InitialRate(
@@ -93,8 +96,9 @@ class PacingPropertiesTest {
     void null_업무_시간대를_거절한다() {
         PacingProperties properties = new PacingProperties(
                 null,
+                Duration.ofSeconds(60),
                 Duration.ofSeconds(10),
-                0.2,
+                validObservation(),
                 Duration.ofMinutes(5),
                 3,
                 validInitialRate(),
@@ -131,11 +135,52 @@ class PacingPropertiesTest {
         )).isInstanceOf(IllegalArgumentException.class);
     }
 
+    @Test
+    void 관측_구간이_갱신_주기보다_짧으면_거절한다() {
+        assertThatThrownBy(() -> new PacingProperties(
+                ZoneId.of("Asia/Seoul"),
+                Duration.ofSeconds(60),
+                Duration.ofSeconds(10),
+                new PacingProperties.Observation(
+                        Duration.ofSeconds(5),
+                        20L,
+                        0.5,
+                        0.2,
+                        0.1
+                ),
+                Duration.ofMinutes(5),
+                3,
+                validInitialRate(),
+                validPeak()
+        )).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void 관측_구간이_갱신_주기의_배수가_아니면_거절한다() {
+        assertThatThrownBy(() -> new PacingProperties(
+                ZoneId.of("Asia/Seoul"),
+                Duration.ofSeconds(60),
+                Duration.ofSeconds(10),
+                new PacingProperties.Observation(
+                        Duration.ofSeconds(25),
+                        20L,
+                        0.5,
+                        0.2,
+                        0.1
+                ),
+                Duration.ofMinutes(5),
+                3,
+                validInitialRate(),
+                validPeak()
+        )).isInstanceOf(IllegalArgumentException.class);
+    }
+
     private PacingProperties validProperties() {
         return new PacingProperties(
                 ZoneId.of("Asia/Seoul"),
+                Duration.ofSeconds(60),
                 Duration.ofSeconds(10),
-                0.2,
+                validObservation(),
                 Duration.ofMinutes(5),
                 3,
                 validInitialRate(),
@@ -148,6 +193,16 @@ class PacingPropertiesTest {
                 0.1,
                 0.1,
                 1.0
+        );
+    }
+
+    private PacingProperties.Observation validObservation() {
+        return new PacingProperties.Observation(
+                Duration.ofMinutes(1),
+                20L,
+                0.5,
+                0.2,
+                0.1
         );
     }
 

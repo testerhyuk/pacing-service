@@ -14,6 +14,8 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 public class RedisPacingStateAdapter
         implements PacingStateGateway {
@@ -25,6 +27,8 @@ public class RedisPacingStateAdapter
     private final RedisScript<List> compareAndSetScript;
     private final PacingStateSnapshotStore snapshotStore;
     private final PacingInfrastructureMetrics metrics;
+    private final ConcurrentMap<String, Long> persistedVersions =
+            new ConcurrentHashMap<>();
 
     public RedisPacingStateAdapter(
             StringRedisTemplate redisTemplate,
@@ -59,6 +63,7 @@ public class RedisPacingStateAdapter
                 readFromRedis(campaignId);
 
         if (current.isPresent()) {
+            persistSnapshotIfNeeded(campaignId, current.get());
             return current.get();
         }
 
@@ -73,6 +78,7 @@ public class RedisPacingStateAdapter
                 fallback
         );
         snapshotStore.saveIfNewer(campaignId, actual);
+        persistedVersions.put(campaignId, actual.version());
         return actual;
     }
 
@@ -86,6 +92,10 @@ public class RedisPacingStateAdapter
                 readFromRedis(campaignId);
 
         if (redisSnapshot.isPresent()) {
+            persistSnapshotIfNeeded(
+                    campaignId,
+                    redisSnapshot.get()
+            );
             return redisSnapshot;
         }
 
@@ -157,8 +167,36 @@ public class RedisPacingStateAdapter
                 result.version()
         );
         snapshotStore.saveIfNewer(campaignId, updated);
+        persistedVersions.put(campaignId, updated.version());
         metrics.recordPacingStateCas("UPDATED");
         return true;
+    }
+
+    @Override
+    public void delete(String campaignId) {
+        validateCampaignId(campaignId);
+        snapshotStore.delete(campaignId);
+        redisTemplate.delete(keyFactory.pacingState(campaignId));
+        persistedVersions.remove(campaignId);
+    }
+
+    private void persistSnapshotIfNeeded(
+            String campaignId,
+            PacingStateSnapshot snapshot
+    ) {
+        Long persistedVersion = persistedVersions.get(campaignId);
+
+        if (persistedVersion != null
+                && persistedVersion >= snapshot.version()) {
+            return;
+        }
+
+        snapshotStore.saveIfNewer(campaignId, snapshot);
+        persistedVersions.merge(
+                campaignId,
+                snapshot.version(),
+                Math::max
+        );
     }
 
     private PacingStateSnapshot executeGetOrInitialize(

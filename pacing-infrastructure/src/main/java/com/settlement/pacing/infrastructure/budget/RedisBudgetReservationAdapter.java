@@ -101,6 +101,7 @@ public class RedisBudgetReservationAdapter
             );
         }
 
+        clearPersistencePending(reservation);
         return result(scriptResult.status(), null);
     }
 
@@ -112,6 +113,7 @@ public class RedisBudgetReservationAdapter
                 persistenceService.insertIfAbsent(storedInRedis);
 
         if (insertResult.inserted()) {
+            clearPersistencePending(storedInRedis);
             return result(
                     ReservationExecutionStatus.CREATED,
                     storedInRedis
@@ -120,6 +122,7 @@ public class RedisBudgetReservationAdapter
 
         BudgetReservation existing = insertResult.reservation();
         compensate(requested);
+        clearPersistencePending(requested);
 
         if (sameIdentity(existing, requested)) {
             return result(
@@ -144,12 +147,14 @@ public class RedisBudgetReservationAdapter
 
         if (!sameIdentity(persisted, storedInRedis)) {
             compensate(storedInRedis);
+            clearPersistencePending(storedInRedis);
             return result(
                     ReservationExecutionStatus.CONFLICT,
                     null
             );
         }
 
+        clearPersistencePending(storedInRedis);
         return result(
                 ReservationExecutionStatus.ALREADY_EXISTS,
                 persisted
@@ -175,6 +180,10 @@ public class RedisBudgetReservationAdapter
                         ),
                         keyFactory.reservationExpiry(
                                 reservation.campaignId()
+                        ),
+                        keyFactory.reservationPersistencePending(),
+                        keyFactory.campaignReservationPersistencePending(
+                                reservation.campaignId()
                         )
                 ),
                 reservation.reservationId(),
@@ -186,6 +195,10 @@ public class RedisBudgetReservationAdapter
                 ),
                 Long.toString(
                         reservation.expiresAt().toEpochMilli()
+                ),
+                keyFactory.reservationPersistenceMember(
+                        reservation.campaignId(),
+                        reservation.reservationId()
                 )
         );
 
@@ -282,6 +295,26 @@ public class RedisBudgetReservationAdapter
         }
     }
 
+    private void clearPersistencePending(
+            BudgetReservation reservation
+    ) {
+        String member = keyFactory.reservationPersistenceMember(
+                reservation.campaignId(),
+                reservation.reservationId()
+        );
+
+        redisTemplate.opsForSet().remove(
+                keyFactory.campaignReservationPersistencePending(
+                        reservation.campaignId()
+                ),
+                member
+        );
+        redisTemplate.opsForSet().remove(
+                keyFactory.reservationPersistencePending(),
+                member
+        );
+    }
+
     private boolean sameIdentity(
             BudgetReservation left,
             BudgetReservation right
@@ -318,7 +351,7 @@ public class RedisBudgetReservationAdapter
             ReservationExecutionStatus status,
             BudgetReservation reservation
     ) {
-        metrics.recordReservation(status);
+        metrics.recordReservation(status.name());
         return new ReservationExecutionResult(
                 status,
                 reservation

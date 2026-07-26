@@ -5,8 +5,11 @@ import com.settlement.pacing.api.PacingApiApplication;
 import com.settlement.pacing.api.gateway.BudgetReservationGateway;
 import com.settlement.pacing.api.gateway.BudgetStateQueryGateway;
 import com.settlement.pacing.api.gateway.CampaignQueryGateway;
+import com.settlement.pacing.api.gateway.CampaignManagementGateway;
+import com.settlement.pacing.api.gateway.PeakPolicyGateway;
 import com.settlement.pacing.api.gateway.PacingStateGateway;
 import com.settlement.pacing.api.gateway.PacingStateSnapshot;
+import com.settlement.pacing.api.gateway.PacingObservationGateway;
 import com.settlement.pacing.api.gateway.ReservationExecutionResult;
 import com.settlement.pacing.api.gateway.ReservationExecutionStatus;
 import com.settlement.pacing.api.security.ClientRateLimiter;
@@ -16,7 +19,12 @@ import com.settlement.pacing.core.budget.BudgetState;
 import com.settlement.pacing.core.budget.Money;
 import com.settlement.pacing.core.campaign.Campaign;
 import com.settlement.pacing.core.pacing.PacingState;
+import com.settlement.pacing.core.pacing.PacingObservation;
+import com.settlement.pacing.core.pacing.DecisionType;
+import com.settlement.pacing.core.pacing.PeakPolicy;
+import com.settlement.pacing.core.pacing.PeakTimeWindow;
 import com.settlement.pacing.core.pacing.Rate;
+import com.settlement.pacing.core.pacing.TrafficWeight;
 import com.settlement.pacing.infrastructure.common.RedisKeyFactory;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -35,6 +43,8 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
@@ -44,6 +54,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @Testcontainers
 @SpringBootTest(
@@ -62,6 +73,7 @@ import static org.assertj.core.api.Assertions.assertThat;
                 "pacing.infrastructure.rate-limit.clients.test-client.refill-tokens-per-second=0.000001",
                 "pacing.security.hmac.timestamp-tolerance=60s",
                 "pacing.security.hmac.nonce-ttl=2m",
+                "pacing.security.hmac.max-request-body-bytes=65536",
                 "pacing.security.hmac.clients.test-client.current-secret-key=0123456789abcdef0123456789abcdef",
                 "pacing.security.hmac.clients.test-client.permissions[0]=PACING_DECIDE"
         }
@@ -118,6 +130,12 @@ class InfrastructureIntegrationTest {
     private CampaignQueryGateway campaignQueryGateway;
 
     @Autowired
+    private CampaignManagementGateway campaignManagementGateway;
+
+    @Autowired
+    private PeakPolicyGateway peakPolicyGateway;
+
+    @Autowired
     private BudgetStateQueryGateway budgetStateQueryGateway;
 
     @Autowired
@@ -125,6 +143,9 @@ class InfrastructureIntegrationTest {
 
     @Autowired
     private PacingStateGateway pacingStateGateway;
+
+    @Autowired
+    private PacingObservationGateway pacingObservationGateway;
 
     @Autowired
     private NonceStore nonceStore;
@@ -153,9 +174,76 @@ class InfrastructureIntegrationTest {
         assertThat(budgetStateQueryGateway).isNotNull();
         assertThat(budgetReservationGateway).isNotNull();
         assertThat(pacingStateGateway).isNotNull();
+        assertThat(pacingObservationGateway).isNotNull();
         assertThat(nonceStore).isNotNull();
         assertThat(clientRateLimiter).isNotNull();
         assertThat(auditLogger).isNotNull();
+    }
+
+    @Test
+    void 캠페인별_판단과_예약을_구간별로_집계하고_중복은_제외한다() {
+        String campaignId = "campaign-observation";
+        long intervalMillis = Duration.ofSeconds(10).toMillis();
+        long currentBucket = Math.floorDiv(
+                clock.instant().toEpochMilli(),
+                intervalMillis
+        ) * intervalMillis;
+        Instant eventAt = Instant.ofEpochMilli(
+                currentBucket - 1L
+        );
+        Instant observedAt = Instant.ofEpochMilli(
+                currentBucket + 1L
+        );
+
+        for (int index = 0; index < 100; index++) {
+            pacingObservationGateway.recordDecision(
+                    "request-" + index,
+                    campaignId,
+                    index < 40
+                            ? DecisionType.PASS
+                            : DecisionType.BLOCK,
+                    eventAt
+            );
+        }
+
+        assertThat(pacingObservationGateway.recordDecision(
+                "request-0",
+                campaignId,
+                DecisionType.PASS,
+                observedAt
+        )).isFalse();
+
+        for (int index = 0; index < 8; index++) {
+            pacingObservationGateway.recordReservation(
+                    "reservation-" + index,
+                    campaignId,
+                    new Money(1_000L),
+                    eventAt
+            );
+        }
+
+        assertThat(pacingObservationGateway.recordReservation(
+                "reservation-0",
+                campaignId,
+                new Money(1_000L),
+                eventAt
+        )).isFalse();
+
+        PacingObservation observation =
+                pacingObservationGateway.recent(
+                        campaignId,
+                        observedAt
+                );
+
+        assertThat(observation.intervalCount()).isEqualTo(1);
+        assertThat(observation.decisionCount()).isEqualTo(100L);
+        assertThat(observation.passCount()).isEqualTo(40L);
+        assertThat(observation.reservationCount()).isEqualTo(8L);
+        assertThat(observation.reservedAmount())
+                .isEqualTo(new Money(8_000L));
+        assertThat(
+                observation.estimatedFullPassAmountPerInterval()
+        ).isEqualTo(20_000.0);
     }
 
     @Test
@@ -563,6 +651,88 @@ class InfrastructureIntegrationTest {
 
         assertThat(values.beforeValue()).isEqualTo("[REDACTED]");
         assertThat(values.afterValue()).isEqualTo("[REDACTED]");
+    }
+
+    @Test
+    void 감사_로그는_저장_후_수정하거나_삭제할_수_없다() {
+        auditLogger.log(new AuditLogger.AuditEvent(
+                AuditLogger.EventType.CAMPAIGN_CHANGE,
+                "operation-server",
+                "request-immutable",
+                "campaign-immutable",
+                null,
+                "created",
+                AuditLogger.Result.SUCCESS,
+                null,
+                NOW
+        ));
+
+        assertThatThrownBy(() -> jdbcClient.sql("""
+                        UPDATE audit_log
+                        SET reason = 'changed'
+                        WHERE request_id = :requestId
+                        """)
+                .param("requestId", "request-immutable")
+                .update())
+                .isInstanceOf(
+                        org.springframework.dao.DataAccessException.class
+                );
+    }
+
+    @Test
+    void 피크_정책은_PostgreSQL에_저장하고_다시_조회한다() {
+        PeakPolicy policy = new PeakPolicy(
+                new PeakTimeWindow(
+                        LocalTime.of(17, 0),
+                        LocalTime.of(22, 0),
+                        ZoneId.of("Asia/Seoul")
+                ),
+                new TrafficWeight(0.4, 1.8)
+        );
+
+        peakPolicyGateway.save(policy);
+
+        assertThat(peakPolicyGateway.find())
+                .contains(policy);
+    }
+
+    @Test
+    void 현재_소진예약액보다_작은_예산으로는_변경할_수_없다() {
+        String campaignId = "campaign-budget-admin";
+        insertCampaign(campaignId, 1_000L, 500L);
+        budgetStateQueryGateway.find(campaignId, BUDGET_DATE)
+                .orElseThrow();
+        budgetReservationGateway.reserve(reservation(
+                "reservation-budget-admin",
+                campaignId,
+                300L
+        ));
+        CampaignManagementGateway.CampaignSettings current =
+                campaignManagementGateway.findById(campaignId)
+                        .orElseThrow();
+
+        CampaignManagementGateway.CampaignSettings requested =
+                new CampaignManagementGateway.CampaignSettings(
+                        current.campaignId(),
+                        current.status(),
+                        current.startAt(),
+                        current.endAt(),
+                        current.pacingStrategy(),
+                        1_000L,
+                        200L,
+                        current.createdAt(),
+                        NOW
+                );
+
+        assertThatThrownBy(() ->
+                campaignManagementGateway.save(
+                        requested,
+                        BUDGET_DATE
+                )
+        ).isInstanceOf(
+                com.settlement.pacing.api.error
+                        .BudgetLimitConflictException.class
+        );
     }
 
     private void insertCampaign(

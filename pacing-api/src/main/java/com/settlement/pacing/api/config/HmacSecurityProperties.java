@@ -5,11 +5,14 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Positive;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
 import java.time.Duration;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -20,6 +23,8 @@ import java.util.Set;
 public record HmacSecurityProperties(
         @NotNull Duration timestampTolerance,
         @NotNull Duration nonceTtl,
+        @Positive @Max(10_485_760)
+        int maxRequestBodyBytes,
         @NotEmpty
         Map<@NotBlank String, @Valid Client> clients
 ) {
@@ -49,6 +54,7 @@ public record HmacSecurityProperties(
     public record Client(
             @NotBlank String currentSecretKey,
             String previousSecretKey,
+            Instant previousSecretValidUntil,
             @NotEmpty Set<@NotNull ClientPermission> permissions
     ) {
         public Client {
@@ -67,6 +73,16 @@ public record HmacSecurityProperties(
                         previousSecretKey,
                         "이전 secretKey"
                 );
+
+                if (previousSecretValidUntil == null) {
+                    throw new IllegalArgumentException(
+                            "이전 secretKey의 유효 종료 시각이 필요합니다"
+                    );
+                }
+            } else if (previousSecretValidUntil != null) {
+                throw new IllegalArgumentException(
+                        "이전 secretKey 없이 유효 종료 시각만 설정할 수 없습니다"
+                );
             }
 
             if (currentSecretKey != null
@@ -81,8 +97,15 @@ public record HmacSecurityProperties(
             }
         }
 
-        public List<String> verificationKeys() {
-            if (previousSecretKey == null) {
+        public List<String> verificationKeys(Instant now) {
+            if (now == null) {
+                throw new IllegalArgumentException(
+                        "현재 시각은 null일 수 없습니다"
+                );
+            }
+
+            if (previousSecretKey == null
+                    || !now.isBefore(previousSecretValidUntil)) {
                 return List.of(currentSecretKey);
             }
 

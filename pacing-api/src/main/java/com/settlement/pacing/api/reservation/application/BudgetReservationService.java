@@ -12,6 +12,7 @@ import com.settlement.pacing.api.gateway.BudgetReservationGateway;
 import com.settlement.pacing.api.gateway.CampaignQueryGateway;
 import com.settlement.pacing.api.gateway.ReservationExecutionResult;
 import com.settlement.pacing.api.gateway.ReservationExecutionStatus;
+import com.settlement.pacing.api.gateway.PacingObservationGateway;
 import com.settlement.pacing.core.budget.BudgetReservation;
 import com.settlement.pacing.core.budget.Money;
 import com.settlement.pacing.core.campaign.Campaign;
@@ -29,6 +30,7 @@ import java.util.Optional;
 public class BudgetReservationService {
     private final CampaignQueryGateway campaignQueryGateway;
     private final BudgetReservationGateway budgetReservationGateway;
+    private final PacingObservationGateway pacingObservationGateway;
     private final PacingProperties pacingProperties;
     private final Clock clock;
     private final PacingApiMetrics pacingApiMetrics;
@@ -44,6 +46,7 @@ public class BudgetReservationService {
                 );
             }
 
+            Instant now = clock.instant();
             Money amount = new Money(command.amount());
 
             Optional<BudgetReservation> existingReservation =
@@ -58,15 +61,27 @@ public class BudgetReservationService {
                                 ? ReservationExecutionStatus.ALREADY_EXISTS
                                 : ReservationExecutionStatus.CONFLICT;
 
+                if (existingStatus == ReservationExecutionStatus.CONFLICT) {
+                    pacingApiMetrics.recordPacingReservation(
+                            timerSample,
+                            existingStatus
+                    );
+                    executionStatusRecorded = true;
+                    throw new ReservationConflictException();
+                }
+
+                pacingObservationGateway.recordReservation(
+                        existing.reservationId(),
+                        existing.campaignId(),
+                        existing.amount(),
+                        existing.reservedAt()
+                );
+
                 pacingApiMetrics.recordPacingReservation(
                         timerSample,
                         existingStatus
                 );
                 executionStatusRecorded = true;
-
-                if (existingStatus == ReservationExecutionStatus.CONFLICT) {
-                    throw new ReservationConflictException();
-                }
 
                 return BudgetReservationResult.existing(existing);
             }
@@ -74,8 +89,6 @@ public class BudgetReservationService {
             Campaign campaign = campaignQueryGateway.findById(command.campaignId()).orElseThrow(
                     () -> new CampaignNotFoundException(command.campaignId())
             );
-
-            Instant now = clock.instant();
 
             if (!campaign.isActive()) {
                 throw CampaignNotReservableException.inactive(
@@ -108,6 +121,19 @@ public class BudgetReservationService {
                             command,
                             amount
                     );
+
+            if (executionStatus == ReservationExecutionStatus.CREATED
+                    || executionStatus
+                    == ReservationExecutionStatus.ALREADY_EXISTS) {
+                BudgetReservation recordedReservation =
+                        executionResult.reservation();
+                pacingObservationGateway.recordReservation(
+                        recordedReservation.reservationId(),
+                        recordedReservation.campaignId(),
+                        recordedReservation.amount(),
+                        recordedReservation.reservedAt()
+                );
+            }
 
             pacingApiMetrics.recordPacingReservation(
                     timerSample,

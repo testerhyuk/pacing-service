@@ -101,6 +101,19 @@ public class GlobalExceptionHandler {
         );
     }
 
+    @ExceptionHandler(BudgetLimitConflictException.class)
+    public ResponseEntity<ErrorResponse> handleBudgetLimitConflict(
+            BudgetLimitConflictException exception,
+            HttpServletRequest request
+    ) {
+        return response(
+                HttpStatus.CONFLICT,
+                ErrorCode.BUDGET_LIMIT_CONFLICT,
+                exception.getMessage(),
+                request
+        );
+    }
+
     @ExceptionHandler(ReservationConflictException.class)
     public ResponseEntity<ErrorResponse> handleReservationConflict(
             ReservationConflictException exception,

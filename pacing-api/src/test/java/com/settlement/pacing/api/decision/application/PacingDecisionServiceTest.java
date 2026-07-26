@@ -9,6 +9,7 @@ import com.settlement.pacing.api.gateway.BudgetStateQueryGateway;
 import com.settlement.pacing.api.gateway.CampaignQueryGateway;
 import com.settlement.pacing.api.gateway.PacingStateGateway;
 import com.settlement.pacing.api.gateway.PacingStateSnapshot;
+import com.settlement.pacing.api.gateway.PacingObservationGateway;
 import com.settlement.pacing.api.monitoring.PacingApiMetrics;
 import com.settlement.pacing.core.budget.BudgetState;
 import com.settlement.pacing.core.budget.Money;
@@ -22,6 +23,7 @@ import com.settlement.pacing.core.pacing.PacingEngine;
 import com.settlement.pacing.core.pacing.PacingRequest;
 import com.settlement.pacing.core.pacing.PacingResult;
 import com.settlement.pacing.core.pacing.PacingState;
+import com.settlement.pacing.core.pacing.PacingObservation;
 import com.settlement.pacing.core.pacing.Rate;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -63,6 +65,7 @@ class PacingDecisionServiceTest {
     private CampaignQueryGateway campaignQueryGateway;
     private BudgetStateQueryGateway budgetStateQueryGateway;
     private PacingStateGateway pacingStateGateway;
+    private PacingObservationGateway pacingObservationGateway;
     private PacingEngine pacingEngine;
     private SampleRateGenerator sampleRateGenerator;
     private PacingApiMetrics pacingApiMetrics;
@@ -79,6 +82,8 @@ class PacingDecisionServiceTest {
         campaignQueryGateway = mock(CampaignQueryGateway.class);
         budgetStateQueryGateway = mock(BudgetStateQueryGateway.class);
         pacingStateGateway = mock(PacingStateGateway.class);
+        pacingObservationGateway =
+                mock(PacingObservationGateway.class);
         pacingEngine = mock(PacingEngine.class);
         sampleRateGenerator = mock(SampleRateGenerator.class);
         pacingApiMetrics = mock(PacingApiMetrics.class);
@@ -90,6 +95,7 @@ class PacingDecisionServiceTest {
                 campaignQueryGateway,
                 budgetStateQueryGateway,
                 pacingStateGateway,
+                pacingObservationGateway,
                 pacingEngine,
                 sampleRateGenerator,
                 properties,
@@ -129,7 +135,8 @@ class PacingDecisionServiceTest {
                 eq(campaign),
                 eq(budgetState),
                 eq(initialPacingState),
-                eq(SAMPLE_RATE)
+                eq(SAMPLE_RATE),
+                eq(PacingObservation.empty())
         )).thenReturn(passResult(initialPacingState));
     }
 
@@ -144,8 +151,100 @@ class PacingDecisionServiceTest {
                 eq(campaign),
                 eq(budgetState),
                 eq(initialPacingState),
-                eq(SAMPLE_RATE)
+                eq(SAMPLE_RATE),
+                eq(PacingObservation.empty())
         );
+    }
+
+    @Test
+    void PASS_판단을_캠페인_관측_통계에_기록한다() {
+        service.decide(command);
+
+        verify(pacingObservationGateway).recordDecision(
+                REQUEST_ID,
+                CAMPAIGN_ID,
+                DecisionType.PASS,
+                DECIDED_AT
+        );
+    }
+
+    @Test
+    void 비율_갱신_시점에는_최근_관측_통계를_엔진에_전달한다() {
+        PacingState dueState = new PacingState(
+                INITIAL_RATE,
+                DECIDED_AT.minusSeconds(10)
+        );
+        PacingStateSnapshot dueSnapshot =
+                new PacingStateSnapshot(dueState, 1L);
+        PacingObservation observation =
+                new PacingObservation(
+                        6,
+                        600L,
+                        120L,
+                        24L,
+                        new Money(24_000L)
+                );
+
+        when(pacingStateGateway.getOrInitialize(
+                eq(CAMPAIGN_ID),
+                any(PacingState.class)
+        )).thenReturn(dueSnapshot);
+        when(pacingObservationGateway.recent(
+                CAMPAIGN_ID,
+                DECIDED_AT
+        )).thenReturn(observation);
+        when(pacingEngine.decide(
+                any(PacingRequest.class),
+                eq(campaign),
+                eq(budgetState),
+                eq(dueState),
+                eq(SAMPLE_RATE),
+                eq(observation)
+        )).thenReturn(passResult(dueState));
+
+        service.decide(command);
+
+        verify(pacingObservationGateway).recent(
+                CAMPAIGN_ID,
+                DECIDED_AT
+        );
+        verify(pacingEngine).decide(
+                any(PacingRequest.class),
+                eq(campaign),
+                eq(budgetState),
+                eq(dueState),
+                eq(SAMPLE_RATE),
+                eq(observation)
+        );
+    }
+
+    @Test
+    void 예산_소진_BLOCK은_트래픽_수용량_관측에서_제외한다() {
+        PacingResult exhausted = new PacingResult(
+                PacingDecision.block(
+                        DecisionReason.BUDGET_EXHAUSTED,
+                        INITIAL_RATE
+                ),
+                initialPacingState
+        );
+        when(pacingEngine.decide(
+                any(PacingRequest.class),
+                eq(campaign),
+                eq(budgetState),
+                eq(initialPacingState),
+                eq(SAMPLE_RATE),
+                any(PacingObservation.class)
+        )).thenReturn(exhausted);
+
+        service.decide(command);
+
+        verify(pacingObservationGateway, never())
+                .recordDecision(
+                        any(String.class),
+                        any(String.class),
+                        any(DecisionType.class),
+                        any(Instant.class)
+                );
     }
 
     @Test
@@ -180,7 +279,25 @@ class PacingDecisionServiceTest {
         assertThat(stateCaptor.getValue().pacingRate())
                 .isEqualTo(INITIAL_RATE);
         assertThat(stateCaptor.getValue().updatedAt())
-                .isEqualTo(REQUESTED_AT);
+                .isEqualTo(DECIDED_AT);
+    }
+
+    @Test
+    void 서버_시각의_허용_범위를_벗어난_requestedAt을_거절한다() {
+        PacingDecisionCommand invalid = new PacingDecisionCommand(
+                REQUEST_ID,
+                CAMPAIGN_ID,
+                DECIDED_AT.plusSeconds(61)
+        );
+
+        assertThatThrownBy(() -> service.decide(invalid))
+                .isInstanceOf(
+                        com.settlement.pacing.api.error
+                                .InvalidRequestException.class
+                );
+
+        verify(campaignQueryGateway, never())
+                .findById(any(String.class));
     }
 
     @Test
@@ -195,7 +312,8 @@ class PacingDecisionServiceTest {
                 eq(campaign),
                 eq(budgetState),
                 eq(initialPacingState),
-                sampleCaptor.capture()
+                sampleCaptor.capture(),
+                any(PacingObservation.class)
         );
 
         List<Rate> samples = sampleCaptor.getAllValues();
@@ -225,7 +343,8 @@ class PacingDecisionServiceTest {
                 eq(campaign),
                 eq(budgetState),
                 eq(initialPacingState),
-                eq(SAMPLE_RATE)
+                eq(SAMPLE_RATE),
+                any(PacingObservation.class)
         )).thenReturn(passResult(changedState));
         when(pacingStateGateway.compareAndSet(
                 CAMPAIGN_ID,
@@ -270,14 +389,16 @@ class PacingDecisionServiceTest {
                 eq(campaign),
                 eq(budgetState),
                 eq(initialPacingState),
-                eq(SAMPLE_RATE)
+                eq(SAMPLE_RATE),
+                any(PacingObservation.class)
         )).thenReturn(passResult(firstChangedState));
         when(pacingEngine.decide(
                 any(PacingRequest.class),
                 eq(campaign),
                 eq(latestBudgetState),
                 eq(latestState),
-                eq(SAMPLE_RATE)
+                eq(SAMPLE_RATE),
+                any(PacingObservation.class)
         )).thenReturn(passResult(secondChangedState));
         when(pacingStateGateway.compareAndSet(
                 CAMPAIGN_ID,
@@ -299,7 +420,8 @@ class PacingDecisionServiceTest {
                 eq(campaign),
                 eq(latestBudgetState),
                 eq(latestState),
-                eq(SAMPLE_RATE)
+                eq(SAMPLE_RATE),
+                any(PacingObservation.class)
         );
     }
 
@@ -319,7 +441,8 @@ class PacingDecisionServiceTest {
                 eq(campaign),
                 eq(budgetState),
                 any(PacingState.class),
-                eq(SAMPLE_RATE)
+                eq(SAMPLE_RATE),
+                any(PacingObservation.class)
         )).thenReturn(passResult(changedState));
         when(pacingStateGateway.compareAndSet(
                 eq(CAMPAIGN_ID),
@@ -340,7 +463,8 @@ class PacingDecisionServiceTest {
                 eq(campaign),
                 eq(budgetState),
                 any(PacingState.class),
-                sampleCaptor.capture()
+                sampleCaptor.capture(),
+                any(PacingObservation.class)
         );
         assertThat(sampleCaptor.getAllValues())
                 .containsExactly(SAMPLE_RATE, SAMPLE_RATE);
@@ -362,7 +486,8 @@ class PacingDecisionServiceTest {
                 eq(campaign),
                 eq(budgetState),
                 any(PacingState.class),
-                eq(SAMPLE_RATE)
+                eq(SAMPLE_RATE),
+                any(PacingObservation.class)
         )).thenReturn(passResult(changedState));
         when(pacingStateGateway.compareAndSet(
                 eq(CAMPAIGN_ID),
@@ -421,7 +546,8 @@ class PacingDecisionServiceTest {
                 eq(campaign),
                 eq(budgetState),
                 eq(initialPacingState),
-                eq(SAMPLE_RATE)
+                eq(SAMPLE_RATE),
+                any(PacingObservation.class)
         )).thenReturn(blockResult);
         BudgetState before = budgetState;
 
@@ -439,8 +565,15 @@ class PacingDecisionServiceTest {
     private PacingProperties properties(int maxRetries) {
         return new PacingProperties(
                 ZoneOffset.UTC,
+                Duration.ofSeconds(60),
                 Duration.ofSeconds(10),
-                0.1,
+                new PacingProperties.Observation(
+                        Duration.ofMinutes(1),
+                        20L,
+                        0.5,
+                        0.2,
+                        0.1
+                ),
                 Duration.ofMinutes(5),
                 maxRetries,
                 new PacingProperties.InitialRate(0.40, 0.30, 1.0),

@@ -2,6 +2,10 @@ package com.settlement.pacing.core.budget;
 
 import java.util.Objects;
 
+/**
+ * 광고비를 대한민국 원(KRW)의 최소 정수 단위로 표현한다.
+ * 예: {@code new Money(1000)}은 1,000원을 의미한다.
+ */
 public record Money(long amount) {
     public Money {
         if (amount < 0) throw new IllegalArgumentException("금액은 0 이상이어야 합니다");

@@ -108,6 +108,7 @@ services:
       - "127.0.0.1:${PACING_PROMETHEUS_PORT:-9090}:9090"
     volumes:
       - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./docker/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
       - pacing-prometheus-data:/prometheus
     restart: unless-stopped
     networks:
@@ -131,6 +132,62 @@ services:
       - pacing-grafana-data:/var/lib/grafana
     depends_on:
       - prometheus
+    restart: unless-stopped
+    networks:
+      - pacing-network
+
+  pacing-api:
+    build:
+      context: .
+      dockerfile: docker/pacing-api.Dockerfile
+    container_name: pacing-api
+    profiles:
+      - application
+    environment:
+      PACING_POSTGRES_URL: jdbc:postgresql://postgres:5432/${PACING_POSTGRES_DATABASE:-pacing}
+      PACING_POSTGRES_USERNAME: ${PACING_POSTGRES_USERNAME:-pacing}
+      PACING_POSTGRES_PASSWORD: ${PACING_POSTGRES_PASSWORD:-pacing}
+      PACING_REDIS_HOST: redis
+      PACING_REDIS_PORT: 6379
+      PACING_REDIS_PASSWORD: ${PACING_REDIS_PASSWORD:-pacing}
+      PACING_HMAC_AD_SERVER_CURRENT_SECRET: ${PACING_HMAC_AD_SERVER_CURRENT_SECRET}
+      PACING_HMAC_AUCTION_SERVER_CURRENT_SECRET: ${PACING_HMAC_AUCTION_SERVER_CURRENT_SECRET}
+      PACING_HMAC_OPERATION_SERVER_CURRENT_SECRET: ${PACING_HMAC_OPERATION_SERVER_CURRENT_SECRET}
+    ports:
+      - "127.0.0.1:${PACING_API_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - pacing-network
+
+  pacing-worker:
+    build:
+      context: .
+      dockerfile: docker/pacing-worker.Dockerfile
+    container_name: pacing-worker
+    profiles:
+      - application
+    environment:
+      PACING_POSTGRES_URL: jdbc:postgresql://postgres:5432/${PACING_POSTGRES_DATABASE:-pacing}
+      PACING_POSTGRES_USERNAME: ${PACING_POSTGRES_USERNAME:-pacing}
+      PACING_POSTGRES_PASSWORD: ${PACING_POSTGRES_PASSWORD:-pacing}
+      PACING_REDIS_HOST: redis
+      PACING_REDIS_PORT: 6379
+      PACING_REDIS_PASSWORD: ${PACING_REDIS_PASSWORD:-pacing}
+      PACING_KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+    ports:
+      - "127.0.0.1:${PACING_WORKER_PORT:-8081}:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - pacing-network

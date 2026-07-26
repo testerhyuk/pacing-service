@@ -72,6 +72,8 @@ local totalKey = KEYS[1]
 local dailyKey = KEYS[2]
 local reservationKey = KEYS[3]
 local expiryKey = KEYS[4]
+local persistencePendingKey = KEYS[5]
+local campaignPersistencePendingKey = KEYS[6]
 
 local reservationId = ARGV[1]
 local campaignId = ARGV[2]
@@ -79,6 +81,7 @@ local budgetDate = ARGV[3]
 local amount = normalize(ARGV[4])
 local reservedAt = ARGV[5]
 local expiresAt = ARGV[6]
+local persistenceMember = ARGV[7]
 
 if not amount or amount == '0' then
     return {'CONFLICT'}
@@ -174,6 +177,17 @@ redis.call(
     expiryKey,
     tonumber(expiresAt),
     reservationId
+)
+
+redis.call(
+    'SADD',
+    persistencePendingKey,
+    persistenceMember
+)
+redis.call(
+    'SADD',
+    campaignPersistencePendingKey,
+    persistenceMember
 )
 
 return {

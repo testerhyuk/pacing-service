@@ -1,1 +1,2 @@
 com.settlement.pacing.infrastructure.config.PacingInfrastructureAutoConfiguration
+com.settlement.pacing.infrastructure.config.PacingWorkerInfrastructureAutoConfiguration

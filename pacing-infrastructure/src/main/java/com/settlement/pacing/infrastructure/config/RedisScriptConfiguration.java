@@ -22,6 +22,11 @@ public class RedisScriptConfiguration {
     }
 
     @Bean
+    public RedisScript<List> updateBudgetLimitsScript() {
+        return listScript("redis/update_budget_limits.lua");
+    }
+
+    @Bean
     public RedisScript<List> reserveBudgetScript() {
         return listScript("redis/reserve_budget.lua");
     }
@@ -29,6 +34,23 @@ public class RedisScriptConfiguration {
     @Bean
     public RedisScript<Long> compensateReservationScript() {
         return longScript("redis/compensate_reservation.lua");
+    }
+
+    @Bean
+    public RedisScript<List> initializeWorkerReservationScript() {
+        return listScript(
+                "redis/initialize_worker_reservation.lua"
+        );
+    }
+
+    @Bean
+    public RedisScript<List> applyBillingEventScript() {
+        return listScript("redis/apply_billing_event.lua");
+    }
+
+    @Bean
+    public RedisScript<List> expireReservationScript() {
+        return listScript("redis/expire_reservation.lua");
     }
 
     @Bean
@@ -43,6 +65,21 @@ public class RedisScriptConfiguration {
         return listScript(
                 "redis/compare_and_set_pacing_state.lua"
         );
+    }
+
+    @Bean
+    public RedisScript<Long> recordPacingDecisionScript() {
+        return longScript("redis/record_pacing_decision.lua");
+    }
+
+    @Bean
+    public RedisScript<Long> recordPacingReservationScript() {
+        return longScript("redis/record_pacing_reservation.lua");
+    }
+
+    @Bean
+    public RedisScript<List> readPacingObservationScript() {
+        return listScript("redis/read_pacing_observation.lua");
     }
 
     @Bean

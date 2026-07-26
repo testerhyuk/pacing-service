@@ -91,6 +91,7 @@ class SecurityConfigurationTest {
                 new HmacSecurityProperties.Client(
                         "ad-server-secret-with-32-bytes-minimum",
                         null,
+                        null,
                         Set.of(ClientPermission.PACING_DECIDE)
                 );
 
@@ -99,6 +100,8 @@ class SecurityConfigurationTest {
                 .thenReturn(Duration.ofSeconds(60));
         when(properties.nonceTtl())
                 .thenReturn(Duration.ofMinutes(2));
+        when(properties.maxRequestBodyBytes())
+                .thenReturn(65_536);
         when(properties.findClient("ad-server"))
                 .thenReturn(Optional.of(adServer));
         when(canonicalRequestBuilder.build(
@@ -180,6 +183,7 @@ class SecurityConfigurationTest {
         HmacSecurityProperties.Client auctionServer =
                 new HmacSecurityProperties.Client(
                         "auction-server-secret-with-32-bytes-minimum",
+                        null,
                         null,
                         Set.of(ClientPermission.BUDGET_RESERVE)
                 );

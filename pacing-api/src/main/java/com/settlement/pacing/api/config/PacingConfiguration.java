@@ -5,14 +5,13 @@ import com.settlement.pacing.core.pacing.AsapPacingPolicy;
 import com.settlement.pacing.core.pacing.AsapTargetSpendRateCalculator;
 import com.settlement.pacing.core.pacing.EvenPacingPolicy;
 import com.settlement.pacing.core.pacing.EvenTargetSpendRateCalculator;
-import com.settlement.pacing.core.pacing.GapBasedPacingRateCalculator;
+import com.settlement.pacing.core.pacing.CapacityBasedPacingRateCalculator;
 import com.settlement.pacing.core.pacing.PacingEngine;
 import com.settlement.pacing.core.pacing.PacingPolicyResolver;
-import com.settlement.pacing.core.pacing.PeakTimeWindow;
+import com.settlement.pacing.core.pacing.PeakPolicyProvider;
 import com.settlement.pacing.core.pacing.PeakWeightedPacingPolicy;
 import com.settlement.pacing.core.pacing.PeakWeightedTargetSpendRateCalculator;
 import com.settlement.pacing.core.pacing.TargetSpendRateCalculatorResolver;
-import com.settlement.pacing.core.pacing.TrafficWeight;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -27,31 +26,6 @@ public class PacingConfiguration {
     }
 
     @Bean
-    public PeakTimeWindow peakTimeWindow(
-            PacingProperties properties
-    ) {
-        PacingProperties.Peak peak = properties.peak();
-
-        return new PeakTimeWindow(
-                peak.startTime(),
-                peak.endTime(),
-                peak.zoneId()
-        );
-    }
-
-    @Bean
-    public TrafficWeight trafficWeight(
-            PacingProperties properties
-    ) {
-        PacingProperties.Peak peak = properties.peak();
-
-        return new TrafficWeight(
-                peak.normalWeight(),
-                peak.peakWeight()
-        );
-    }
-
-    @Bean
     public EvenTargetSpendRateCalculator
     evenTargetSpendRateCalculator() {
         return new EvenTargetSpendRateCalculator();
@@ -60,12 +34,10 @@ public class PacingConfiguration {
     @Bean
     public PeakWeightedTargetSpendRateCalculator
     peakWeightedTargetSpendRateCalculator(
-            PeakTimeWindow peakTimeWindow,
-            TrafficWeight trafficWeight
+            PeakPolicyProvider peakPolicyProvider
     ) {
         return new PeakWeightedTargetSpendRateCalculator(
-                peakTimeWindow,
-                trafficWeight
+                peakPolicyProvider
         );
     }
 
@@ -118,12 +90,18 @@ public class PacingConfiguration {
     }
 
     @Bean
-    public GapBasedPacingRateCalculator
-    gapBasedPacingRateCalculator(
+    public CapacityBasedPacingRateCalculator
+    capacityBasedPacingRateCalculator(
             PacingProperties properties
     ) {
-        return new GapBasedPacingRateCalculator(
-                properties.adjustmentGain()
+        PacingProperties.Observation observation =
+                properties.observation();
+
+        return new CapacityBasedPacingRateCalculator(
+                observation.minimumPassCount(),
+                observation.smoothingFactor(),
+                observation.maxRateChange(),
+                observation.explorationStep()
         );
     }
 
@@ -135,7 +113,7 @@ public class PacingConfiguration {
 
     @Bean
     public PacingEngine pacingEngine(
-            GapBasedPacingRateCalculator pacingRateCalculator,
+            CapacityBasedPacingRateCalculator pacingRateCalculator,
             PacingPolicyResolver pacingPolicyResolver,
             TargetSpendRateCalculatorResolver targetResolver,
             ActualSpendRateCalculator actualSpendRateCalculator,

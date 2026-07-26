@@ -1,0 +1,23 @@
+server:
+  ssl:
+    enabled: true
+    enabled-protocols: TLSv1.2,TLSv1.3
+    key-store: ${PACING_TLS_KEY_STORE}
+    key-store-password: ${PACING_TLS_KEY_STORE_PASSWORD}
+    key-store-type: ${PACING_TLS_KEY_STORE_TYPE:PKCS12}
+
+spring:
+  datasource:
+    url: ${PACING_POSTGRES_URL}
+  flyway:
+    user: ${PACING_MIGRATION_POSTGRES_USERNAME}
+    password: ${PACING_MIGRATION_POSTGRES_PASSWORD}
+  data:
+    redis:
+      ssl:
+        enabled: true
+
+management:
+  endpoint:
+    health:
+      show-details: never
