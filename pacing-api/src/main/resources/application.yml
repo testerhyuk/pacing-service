@@ -88,6 +88,21 @@ spring:
     redis:
       host: ${PACING_REDIS_HOST:localhost}
       port: ${PACING_REDIS_PORT:6379}
-      password: ${PACING_REDIS_PASSWORD:}
+      password: ${PACING_REDIS_PASSWORD:pacing}
       connect-timeout: 500ms
       timeout: 500ms
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include:
+          - health
+          - info
+          - prometheus
+  endpoint:
+    health:
+      show-details: never
+  metrics:
+    tags:
+      application: pacing-api

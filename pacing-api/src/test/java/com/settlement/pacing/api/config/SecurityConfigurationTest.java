@@ -143,6 +143,15 @@ class SecurityConfigurationTest {
     }
 
     @Test
+    void Prometheus_경로는_HMAC_인증_없이_접근할_수_있다()
+            throws Exception {
+        mockMvc.perform(get("/actuator/prometheus"))
+                .andExpect(result -> assertThat(
+                        result.getResponse().getStatus()
+                ).isNotIn(401, 403));
+    }
+
+    @Test
     void 페이싱_판단_API에_인증_헤더가_없으면_401이다()
             throws Exception {
         mockMvc.perform(post(DECISION_ENDPOINT)
