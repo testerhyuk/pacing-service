@@ -1,7 +1,13 @@
 pacing:
   business-zone-id: Asia/Seoul
+  request-time-tolerance: 60s
   rate-update-interval: 10s
-  adjustment-gain: 0.2
+  observation:
+    window: 1m
+    minimum-pass-count: 20
+    smoothing-factor: 0.5
+    max-rate-change: 0.2
+    exploration-step: 0.1
   reservation-ttl: 5m
   state-update-max-retries: 3
 
@@ -16,16 +22,19 @@ pacing:
     zone-id: Asia/Seoul
     normal-weight: 0.5
     peak-weight: 1.5
+    refresh-interval: 5s
 
   security:
     hmac:
       timestamp-tolerance: 60s
       nonce-ttl: 2m
+      max-request-body-bytes: ${PACING_HMAC_MAX_REQUEST_BODY_BYTES:65536}
 
       clients:
         ad-server:
           current-secret-key: ${PACING_HMAC_AD_SERVER_CURRENT_SECRET}
           previous-secret-key: ${PACING_HMAC_AD_SERVER_PREVIOUS_SECRET:}
+          previous-secret-valid-until: ${PACING_HMAC_AD_SERVER_PREVIOUS_SECRET_VALID_UNTIL:}
           permissions:
             - PACING_DECIDE
             - BUDGET_RESERVE
@@ -33,12 +42,14 @@ pacing:
         auction-server:
           current-secret-key: ${PACING_HMAC_AUCTION_SERVER_CURRENT_SECRET}
           previous-secret-key: ${PACING_HMAC_AUCTION_SERVER_PREVIOUS_SECRET:}
+          previous-secret-valid-until: ${PACING_HMAC_AUCTION_SERVER_PREVIOUS_SECRET_VALID_UNTIL:}
           permissions:
             - BUDGET_RESERVE
 
         operation-server:
           current-secret-key: ${PACING_HMAC_OPERATION_SERVER_CURRENT_SECRET}
           previous-secret-key: ${PACING_HMAC_OPERATION_SERVER_PREVIOUS_SECRET:}
+          previous-secret-valid-until: ${PACING_HMAC_OPERATION_SERVER_PREVIOUS_SECRET_VALID_UNTIL:}
           permissions:
             - ADMIN
 
@@ -68,7 +79,7 @@ pacing:
 spring:
   datasource:
     url: ${PACING_POSTGRES_URL:jdbc:postgresql://localhost:5432/pacing}
-    username: ${PACING_POSTGRES_USERNAME:pacing}
+    username: ${PACING_API_POSTGRES_USERNAME:${PACING_POSTGRES_USERNAME:pacing}}
     password: ${PACING_POSTGRES_PASSWORD:pacing}
     hikari:
       maximum-pool-size: ${PACING_DB_MAX_POOL_SIZE:20}
@@ -88,6 +99,7 @@ spring:
     redis:
       host: ${PACING_REDIS_HOST:localhost}
       port: ${PACING_REDIS_PORT:6379}
+      username: ${PACING_API_REDIS_USERNAME:}
       password: ${PACING_REDIS_PASSWORD:pacing}
       connect-timeout: 500ms
       timeout: 500ms
@@ -106,3 +118,7 @@ management:
   metrics:
     tags:
       application: pacing-api
+    distribution:
+      percentiles-histogram:
+        pacing.api.decision: true
+        pacing.api.reservation: true

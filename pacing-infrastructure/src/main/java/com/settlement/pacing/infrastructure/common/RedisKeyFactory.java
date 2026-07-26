@@ -8,6 +8,7 @@ import java.util.Base64;
 
 public class RedisKeyFactory {
     private static final Base64.Encoder KEY_ENCODER = Base64.getUrlEncoder().withoutPadding();
+    private static final Base64.Decoder KEY_DECODER = Base64.getUrlDecoder();
 
     private final String keyPrefix;
 
@@ -71,6 +72,39 @@ public class RedisKeyFactory {
                 + "}";
     }
 
+    public String pacingObservation(
+            String campaignId,
+            long bucketStartEpochMillis
+    ) {
+        return keyPrefix
+                + ":pacing-observation:{"
+                + encode(campaignId)
+                + "}:"
+                + bucketStartEpochMillis;
+    }
+
+    public String pacingObservationDecisionIds(
+            String campaignId,
+            long bucketStartEpochMillis
+    ) {
+        return keyPrefix
+                + ":pacing-observation-decision-ids:{"
+                + encode(campaignId)
+                + "}:"
+                + bucketStartEpochMillis;
+    }
+
+    public String pacingObservationReservationIds(
+            String campaignId,
+            long bucketStartEpochMillis
+    ) {
+        return keyPrefix
+                + ":pacing-observation-reservation-ids:{"
+                + encode(campaignId)
+                + "}:"
+                + bucketStartEpochMillis;
+    }
+
     /**
      * 예산 예약 정보 Key를 생성한다.
      */
@@ -93,6 +127,73 @@ public class RedisKeyFactory {
                 + ":reservation-expiry:{"
                 + encode(campaignId)
                 + "}";
+    }
+
+    public String reservationPersistencePending() {
+        return keyPrefix + ":reservation-persistence-pending";
+    }
+
+    public String campaignReservationPersistencePending(
+            String campaignId
+    ) {
+        return keyPrefix
+                + ":reservation-persistence-pending:{"
+                + encode(campaignId)
+                + "}";
+    }
+
+    public String reservationPersistenceMember(
+            String campaignId,
+            String reservationId
+    ) {
+        return encode(campaignId)
+                + "."
+                + encode(reservationId);
+    }
+
+    public PendingReservationKey parseReservationPersistenceMember(
+            String member
+    ) {
+        if (member == null || member.isBlank()) {
+            throw new IllegalArgumentException(
+                    "예약 영속화 대기 식별자는 비어있을 수 없습니다"
+            );
+        }
+
+        String[] values = member.split("\\.", -1);
+        if (values.length != 2
+                || values[0].isBlank()
+                || values[1].isBlank()) {
+            throw new IllegalArgumentException(
+                    "예약 영속화 대기 식별자 형식이 올바르지 않습니다"
+            );
+        }
+
+        try {
+            return new PendingReservationKey(
+                    decode(values[0]),
+                    decode(values[1])
+            );
+        } catch (IllegalArgumentException exception) {
+            throw new IllegalArgumentException(
+                    "예약 영속화 대기 식별자를 해석할 수 없습니다",
+                    exception
+            );
+        }
+    }
+
+    /**
+     * 과금 이벤트의 Redis 중복 처리 방지 Key를 생성한다.
+     */
+    public String billingEvent(
+            String campaignId,
+            String eventId
+    ) {
+        return keyPrefix
+                + ":billing-event:{"
+                + encode(campaignId)
+                + "}:"
+                + encode(eventId);
     }
 
     /**
@@ -138,5 +239,18 @@ public class RedisKeyFactory {
         return KEY_ENCODER.encodeToString(
                 value.getBytes(StandardCharsets.UTF_8)
         );
+    }
+
+    private String decode(String value) {
+        return new String(
+                KEY_DECODER.decode(value),
+                StandardCharsets.UTF_8
+        );
+    }
+
+    public record PendingReservationKey(
+            String campaignId,
+            String reservationId
+    ) {
     }
 }

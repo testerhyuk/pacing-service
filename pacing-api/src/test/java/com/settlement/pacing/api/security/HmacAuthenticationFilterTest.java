@@ -471,6 +471,31 @@ class HmacAuthenticationFilterTest {
         );
     }
 
+    @Test
+    void 허용_크기를_초과한_요청_본문은_413으로_거절한다()
+            throws Exception {
+        MockHttpServletRequest request = signedRequest();
+        request.setContent(new byte[65_537]);
+        MockHttpServletResponse response =
+                new MockHttpServletResponse();
+
+        filter.doFilter(request, response, filterChain);
+
+        assertThat(response.getStatus()).isEqualTo(413);
+        verify(errorResponseWriter).write(
+                response,
+                HttpStatus.PAYLOAD_TOO_LARGE,
+                ErrorCode.REQUEST_BODY_TOO_LARGE,
+                "요청 본문이 허용 크기를 초과했습니다",
+                PATH
+        );
+        verify(signatureVerifier, never()).verify(
+                anyString(),
+                anyString(),
+                anyString()
+        );
+    }
+
     private MockHttpServletRequest signedRequest() {
         MockHttpServletRequest request =
                 new MockHttpServletRequest("POST", PATH);
@@ -502,12 +527,14 @@ class HmacAuthenticationFilterTest {
                 new HmacSecurityProperties.Client(
                         CURRENT_KEY,
                         PREVIOUS_KEY,
+                        NOW.plusSeconds(3_600),
                         permissions
                 );
 
         return new HmacSecurityProperties(
                 Duration.ofSeconds(60),
                 Duration.ofMinutes(2),
+                65_536,
                 Map.of(CLIENT_ID, client)
         );
     }

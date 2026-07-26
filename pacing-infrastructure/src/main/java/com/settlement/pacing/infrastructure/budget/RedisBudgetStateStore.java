@@ -15,18 +15,21 @@ public class RedisBudgetStateStore {
     private final RedisKeyFactory keyFactory;
     private final RedisScript<List> readBudgetStateScript;
     private final RedisScript<Long> initializeBudgetStateScript;
+    private final RedisScript<List> updateBudgetLimitsScript;
 
     public RedisBudgetStateStore(
             StringRedisTemplate redisTemplate,
             RedisKeyFactory keyFactory,
             RedisScript<List> readBudgetStateScript,
-            RedisScript<Long> initializeBudgetStateScript
+            RedisScript<Long> initializeBudgetStateScript,
+            RedisScript<List> updateBudgetLimitsScript
     ) {
         this.redisTemplate = redisTemplate;
         this.keyFactory = keyFactory;
         this.readBudgetStateScript = readBudgetStateScript;
         this.initializeBudgetStateScript =
                 initializeBudgetStateScript;
+        this.updateBudgetLimitsScript = updateBudgetLimitsScript;
     }
 
     public ReadResult read(
@@ -147,6 +150,56 @@ public class RedisBudgetStateStore {
         );
     }
 
+    public LimitUpdateResult updateLimits(
+            String campaignId,
+            LocalDate budgetDate,
+            long totalBudget,
+            long dailyBudgetLimit
+    ) {
+        List<?> result = redisTemplate.execute(
+                updateBudgetLimitsScript,
+                List.of(
+                        keyFactory.totalBudget(campaignId),
+                        keyFactory.dailyBudget(campaignId, budgetDate)
+                ),
+                Long.toString(totalBudget),
+                Long.toString(dailyBudgetLimit)
+        );
+
+        if (result == null || result.isEmpty()) {
+            throw corrupted(
+                    "Redis 예산 한도 변경 결과가 비어있습니다",
+                    null
+            );
+        }
+
+        LimitUpdateStatus status;
+        try {
+            status = LimitUpdateStatus.valueOf(value(result, 0));
+        } catch (IllegalArgumentException exception) {
+            throw corrupted(
+                    "알 수 없는 Redis 예산 한도 변경 결과입니다",
+                    exception
+            );
+        }
+
+        if (status != LimitUpdateStatus.UPDATED) {
+            return new LimitUpdateResult(status, -1L, -1L);
+        }
+        if (result.size() != 3) {
+            throw corrupted(
+                    "Redis 예산 한도 변경 결과 필드가 누락됐습니다",
+                    null
+            );
+        }
+
+        return new LimitUpdateResult(
+                status,
+                Long.parseLong(value(result, 1)),
+                Long.parseLong(value(result, 2))
+        );
+    }
+
     private long parseAmount(List<?> result, int index) {
         long parsed = Long.parseLong(value(result, index));
 
@@ -213,5 +266,21 @@ public class RedisBudgetStateStore {
         public boolean found() {
             return status == ReadStatus.FOUND;
         }
+    }
+
+    public enum LimitUpdateStatus {
+        UPDATED,
+        MISSING,
+        INSUFFICIENT_TOTAL,
+        INSUFFICIENT_DAILY,
+        INVALID_LIMIT,
+        CORRUPTED
+    }
+
+    public record LimitUpdateResult(
+            LimitUpdateStatus status,
+            long previousTotalBudget,
+            long previousDailyBudgetLimit
+    ) {
     }
 }

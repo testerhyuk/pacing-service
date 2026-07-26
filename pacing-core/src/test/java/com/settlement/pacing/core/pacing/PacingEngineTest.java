@@ -230,15 +230,30 @@ class PacingEngineTest {
                 campaign,
                 budgetState,
                 pacingState,
-                new Rate(0.5)
+                new Rate(0.05),
+                observation()
         );
 
         assertThat(result.decision().decisionType()).isEqualTo(DecisionType.PASS);
         assertThat(result.decision().reason()).isEqualTo(DecisionReason.PASS);
 
-        assertThat(result.decision().pacingRate().value()).isCloseTo(0.525, within(0.000000001));
+        double expectedPacingRate =
+                80_000.0
+                        * (5.0 / 86_400.0)
+                        / 0.75
+                        / 100.0;
 
-        assertThat(result.pacingState().pacingRate().value()).isCloseTo(0.525, within(0.000000001));
+        assertThat(result.decision().pacingRate().value())
+                .isCloseTo(
+                        expectedPacingRate,
+                        within(0.000000001)
+                );
+
+        assertThat(result.pacingState().pacingRate().value())
+                .isCloseTo(
+                        expectedPacingRate,
+                        within(0.000000001)
+                );
 
         assertThat(result.pacingState().updatedAt()).isEqualTo(now);
     }
@@ -279,12 +294,22 @@ class PacingEngineTest {
                 campaign,
                 budgetState,
                 pacingState,
-                new Rate(0.7)
+                new Rate(0.7),
+                observation()
         );
 
         assertThat(result.decision().decisionType()).isEqualTo(DecisionType.BLOCK);
         assertThat(result.decision().reason()).isEqualTo(DecisionReason.PACING_REJECTED);
-        assertThat(result.decision().pacingRate().value()).isCloseTo(0.525, within(0.000000001));
+        double expectedPacingRate =
+                80_000.0
+                        * (5.0 / 86_400.0)
+                        / 0.75
+                        / 100.0;
+        assertThat(result.decision().pacingRate().value())
+                .isCloseTo(
+                        expectedPacingRate,
+                        within(0.000000001)
+                );
     }
 
     @Test
@@ -515,12 +540,11 @@ class PacingEngineTest {
                 campaign,
                 budgetState,
                 pacingState,
-                new Rate(0.7)
+                new Rate(0.3),
+                observation()
         );
 
-        double targetSpendRate = 12.0 / 17.0;
-        double expectedPacingRate =
-                0.5 + 0.5 * (targetSpendRate - 0.2);
+        double expectedPacingRate = 1.0 / 3.0;
 
         assertThat(result.decision().decisionType())
                 .isEqualTo(DecisionType.PASS);
@@ -568,11 +592,26 @@ class PacingEngineTest {
                 );
 
         return new PacingEngine(
-                new GapBasedPacingRateCalculator(0.5),
+                new CapacityBasedPacingRateCalculator(
+                        1L,
+                        1.0,
+                        1.0,
+                        0.1
+                ),
                 pacingPolicyResolver,
                 targetResolver,
                 new ActualSpendRateCalculator(),
                 Duration.ofSeconds(5)
+        );
+    }
+
+    private PacingObservation observation() {
+        return new PacingObservation(
+                1,
+                100L,
+                100L,
+                10L,
+                new Money(100L)
         );
     }
 }

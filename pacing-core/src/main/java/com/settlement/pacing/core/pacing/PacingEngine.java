@@ -47,11 +47,30 @@ public class PacingEngine {
             PacingState pacingState,
             Rate sampleRate
     ) {
+        return decide(
+                request,
+                campaign,
+                budgetState,
+                pacingState,
+                sampleRate,
+                PacingObservation.empty()
+        );
+    }
+
+    public PacingResult decide(
+            PacingRequest request,
+            Campaign campaign,
+            BudgetState budgetState,
+            PacingState pacingState,
+            Rate sampleRate,
+            PacingObservation observation
+    ) {
         if (request == null
                 ||campaign == null
                 || budgetState == null
                 || pacingState == null
                 || sampleRate == null
+                || observation == null
         ) {
             throw new IllegalArgumentException("페이싱 판단에 필요한 값은 null일 수 없습니다");
         }
@@ -112,11 +131,26 @@ public class PacingEngine {
                 now,
                 pacingRateUpdateInterval
         )) {
+            Instant nextTargetAt = now.plus(
+                    pacingRateUpdateInterval
+            );
+            if (nextTargetAt.isAfter(campaign.endAt())) {
+                nextTargetAt = campaign.endAt();
+            }
+
+            Rate nextTargetSpendRate =
+                    targetCalculator.calculate(
+                            campaign,
+                            nextTargetAt
+                    );
+
             Rate adjustedPacingRate =
                     pacingRateCalculator.calculate(
                             pacingState.pacingRate(),
+                            budgetState,
                             targetSpendRate,
-                            actualSpendRate
+                            nextTargetSpendRate,
+                            observation
                     );
 
             nextPacingState = new PacingState(

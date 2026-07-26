@@ -10,6 +10,7 @@ import com.settlement.pacing.api.gateway.BudgetReservationGateway;
 import com.settlement.pacing.api.gateway.CampaignQueryGateway;
 import com.settlement.pacing.api.gateway.ReservationExecutionResult;
 import com.settlement.pacing.api.gateway.ReservationExecutionStatus;
+import com.settlement.pacing.api.gateway.PacingObservationGateway;
 import com.settlement.pacing.api.monitoring.PacingApiMetrics;
 import com.settlement.pacing.core.budget.BudgetReservation;
 import com.settlement.pacing.core.budget.Money;
@@ -53,6 +54,7 @@ class BudgetReservationServiceTest {
 
     private CampaignQueryGateway campaignQueryGateway;
     private BudgetReservationGateway budgetReservationGateway;
+    private PacingObservationGateway pacingObservationGateway;
     private PacingApiMetrics pacingApiMetrics;
     private BudgetReservationService service;
     private BudgetReservationCommand command;
@@ -62,6 +64,8 @@ class BudgetReservationServiceTest {
     void setUp() {
         campaignQueryGateway = mock(CampaignQueryGateway.class);
         budgetReservationGateway = mock(BudgetReservationGateway.class);
+        pacingObservationGateway =
+                mock(PacingObservationGateway.class);
         pacingApiMetrics = mock(PacingApiMetrics.class);
 
         Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
@@ -70,6 +74,7 @@ class BudgetReservationServiceTest {
         service = new BudgetReservationService(
                 campaignQueryGateway,
                 budgetReservationGateway,
+                pacingObservationGateway,
                 properties,
                 clock,
                 pacingApiMetrics
@@ -146,6 +151,18 @@ class BudgetReservationServiceTest {
     }
 
     @Test
+    void 신규_예약_금액을_캠페인_관측_통계에_기록한다() {
+        service.reserve(command);
+
+        verify(pacingObservationGateway).recordReservation(
+                RESERVATION_ID,
+                CAMPAIGN_ID,
+                new Money(AMOUNT),
+                NOW
+        );
+    }
+
+    @Test
     void 동일한_기존_예약은_created_false로_반환한다() {
         BudgetReservation existingReservation =
                 existingReservation(CAMPAIGN_ID, AMOUNT);
@@ -159,6 +176,23 @@ class BudgetReservationServiceTest {
                 .isEqualTo(existingReservation);
         verify(budgetReservationGateway, never())
                 .reserve(any(BudgetReservation.class));
+    }
+
+    @Test
+    void 동일한_기존_예약도_누락된_통계를_복구할_수_있도록_기록을_재시도한다() {
+        BudgetReservation existingReservation =
+                existingReservation(CAMPAIGN_ID, AMOUNT);
+        when(budgetReservationGateway.findById(RESERVATION_ID))
+                .thenReturn(Optional.of(existingReservation));
+
+        service.reserve(command);
+
+        verify(pacingObservationGateway).recordReservation(
+                existingReservation.reservationId(),
+                existingReservation.campaignId(),
+                existingReservation.amount(),
+                existingReservation.reservedAt()
+        );
     }
 
     @Test
@@ -347,8 +381,15 @@ class BudgetReservationServiceTest {
     private PacingProperties properties() {
         return new PacingProperties(
                 BUSINESS_ZONE_ID,
+                Duration.ofSeconds(60),
                 Duration.ofSeconds(10),
-                0.1,
+                new PacingProperties.Observation(
+                        Duration.ofMinutes(1),
+                        20L,
+                        0.5,
+                        0.2,
+                        0.1
+                ),
                 RESERVATION_TTL,
                 3,
                 new PacingProperties.InitialRate(

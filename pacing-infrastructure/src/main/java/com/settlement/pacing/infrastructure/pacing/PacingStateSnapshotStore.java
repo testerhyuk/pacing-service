@@ -38,6 +38,10 @@ public class PacingStateSnapshotStore {
         );
     }
 
+    public void delete(String campaignId) {
+        repository.deleteById(campaignId);
+    }
+
     private PacingStateSnapshot toSnapshot(
             PacingStateSnapshotEntity entity
     ) {

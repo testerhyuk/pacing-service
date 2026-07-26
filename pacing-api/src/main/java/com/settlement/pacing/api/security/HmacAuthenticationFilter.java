@@ -129,8 +129,19 @@ public class HmacAuthenticationFilter
             return;
         }
 
-        byte[] requestBody =
-                request.getInputStream().readAllBytes();
+        long declaredLength = request.getContentLengthLong();
+        if (declaredLength > properties.maxRequestBodyBytes()) {
+            rejectBodyTooLarge(request, response);
+            return;
+        }
+
+        byte[] requestBody = request.getInputStream().readNBytes(
+                properties.maxRequestBodyBytes() + 1
+        );
+        if (requestBody.length > properties.maxRequestBodyBytes()) {
+            rejectBodyTooLarge(request, response);
+            return;
+        }
         CachedBodyHttpServletRequest cachedRequest =
                 new CachedBodyHttpServletRequest(
                         request,
@@ -146,7 +157,9 @@ public class HmacAuthenticationFilter
                 requestBody
         );
 
-        boolean signatureVerified = client.verificationKeys()
+        boolean signatureVerified = client.verificationKeys(
+                        clock.instant()
+                )
                 .stream()
                 .anyMatch(secretKey -> signatureVerifier.verify(
                         canonicalRequest,
@@ -369,6 +382,19 @@ public class HmacAuthenticationFilter
 
     private boolean isBlank(String value) {
         return value == null || value.isBlank();
+    }
+
+    private void rejectBodyTooLarge(
+            HttpServletRequest request,
+            HttpServletResponse response
+    ) throws IOException {
+        errorResponseWriter.write(
+                response,
+                HttpStatus.PAYLOAD_TOO_LARGE,
+                ErrorCode.REQUEST_BODY_TOO_LARGE,
+                "요청 본문이 허용 크기를 초과했습니다",
+                request.getRequestURI()
+        );
     }
 
     private enum TimestampValidation {

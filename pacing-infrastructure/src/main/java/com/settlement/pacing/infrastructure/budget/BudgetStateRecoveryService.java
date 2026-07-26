@@ -8,7 +8,6 @@ import com.settlement.pacing.infrastructure.monitoring.PacingInfrastructureMetri
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.QueryTimeoutException;
 
-import java.time.Clock;
 import java.time.LocalDate;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
@@ -18,7 +17,6 @@ public class BudgetStateRecoveryService {
     private final RedisBudgetStateStore budgetStateStore;
     private final RedisRecoveryLock recoveryLock;
     private final RedisInfrastructureProperties properties;
-    private final Clock clock;
     private final PacingInfrastructureMetrics metrics;
 
     public BudgetStateRecoveryService(
@@ -26,14 +24,12 @@ public class BudgetStateRecoveryService {
             RedisBudgetStateStore budgetStateStore,
             RedisRecoveryLock recoveryLock,
             RedisInfrastructureProperties properties,
-            Clock clock,
             PacingInfrastructureMetrics metrics
     ) {
         this.queryRepository = queryRepository;
         this.budgetStateStore = budgetStateStore;
         this.recoveryLock = recoveryLock;
         this.properties = properties;
-        this.clock = clock;
         this.metrics = metrics;
     }
 
@@ -79,8 +75,7 @@ public class BudgetStateRecoveryService {
         BudgetStateRecoveryQueryRepository.BudgetAggregate
                 aggregate = queryRepository.aggregate(
                 campaignId,
-                budgetDate,
-                clock.instant()
+                budgetDate
         );
 
         BudgetStateRecoveryQueryRepository.CampaignBudgetPolicy
@@ -130,6 +125,23 @@ public class BudgetStateRecoveryService {
             if (current.found()) {
                 metrics.recordBudgetRecovery("WAITED_FOR_OWNER");
                 return Optional.of(current.budgetState());
+            }
+
+            Optional<String> lockToken =
+                    recoveryLock.tryAcquire(campaignId);
+
+            if (lockToken.isPresent()) {
+                try {
+                    return recoverAsLockOwner(
+                            campaignId,
+                            budgetDate
+                    );
+                } finally {
+                    recoveryLock.release(
+                            campaignId,
+                            lockToken.get()
+                    );
+                }
             }
 
             sleepBeforeRetry();

@@ -18,16 +18,19 @@ import java.time.ZoneId;
 @Validated
 public record PacingProperties(
         @NotNull ZoneId businessZoneId,
+        @NotNull Duration requestTimeTolerance,
         @NotNull Duration rateUpdateInterval,
-        @DecimalMin(value = "0.0", inclusive = false)
-        @DecimalMax("1.0")
-        double adjustmentGain,
+        @NotNull @Valid Observation observation,
         @NotNull Duration reservationTtl,
         @Min(0) int stateUpdateMaxRetries,
         @NotNull @Valid InitialRate initialRate,
         @NotNull @Valid Peak peak
 ) {
     public PacingProperties {
+        validatePositiveDuration(
+                requestTimeTolerance,
+                "요청 시각 허용 오차"
+        );
         validatePositiveDuration(
                 rateUpdateInterval,
                 "페이싱 비율 갱신 주기"
@@ -36,6 +39,27 @@ public record PacingProperties(
                 reservationTtl,
                 "예약 TTL"
         );
+
+        if (observation != null
+                && rateUpdateInterval != null) {
+            Duration window = observation.window();
+
+            if (window != null
+                    && window.compareTo(rateUpdateInterval) < 0) {
+                throw new IllegalArgumentException(
+                        "관측 구간은 페이싱 갱신 주기보다 짧을 수 없습니다"
+                );
+            }
+
+            if (window != null
+                    && rateUpdateInterval.toMillis() > 0L
+                    && window.toMillis()
+                    % rateUpdateInterval.toMillis() != 0L) {
+                throw new IllegalArgumentException(
+                        "관측 구간은 페이싱 갱신 주기의 배수여야 합니다"
+                );
+            }
+        }
     }
 
     public Rate initialRate(PacingStrategy strategy) {
@@ -55,6 +79,24 @@ public record PacingProperties(
             @DecimalMin("0.0") @DecimalMax("1.0") double peakWeighted,
             @DecimalMin("0.0") @DecimalMax("1.0") double asap
     ) {
+    }
+
+    public record Observation(
+            @NotNull Duration window,
+            @Min(1) long minimumPassCount,
+            @DecimalMin(value = "0.0", inclusive = false)
+            @DecimalMax("1.0")
+            double smoothingFactor,
+            @DecimalMin(value = "0.0", inclusive = false)
+            @DecimalMax("1.0")
+            double maxRateChange,
+            @DecimalMin(value = "0.0", inclusive = false)
+            @DecimalMax("1.0")
+            double explorationStep
+    ) {
+        public Observation {
+            validatePositiveDuration(window, "페이싱 관측 구간");
+        }
     }
 
     public record Peak(
@@ -100,6 +142,12 @@ public record PacingProperties(
                 && (duration.isZero() || duration.isNegative())) {
             throw new IllegalArgumentException(
                     fieldName + "는 0보다 커야 합니다"
+            );
+        }
+
+        if (duration != null && duration.toMillis() == 0L) {
+            throw new IllegalArgumentException(
+                    fieldName + "는 1밀리초 이상이어야 합니다"
             );
         }
     }

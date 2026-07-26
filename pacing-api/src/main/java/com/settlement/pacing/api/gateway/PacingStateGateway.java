@@ -17,4 +17,6 @@ public interface PacingStateGateway {
             long expectedVersion,
             PacingState newState
     );
+
+    void delete(String campaignId);
 }

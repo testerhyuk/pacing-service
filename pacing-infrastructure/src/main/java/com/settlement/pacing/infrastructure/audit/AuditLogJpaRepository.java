@@ -1,7 +1,9 @@
 package com.settlement.pacing.infrastructure.audit;
 
-import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.repository.Repository;
 
 public interface AuditLogJpaRepository
-        extends JpaRepository<AuditLogEntity, Long> {
+        extends Repository<AuditLogEntity, Long> {
+
+    AuditLogEntity save(AuditLogEntity entity);
 }

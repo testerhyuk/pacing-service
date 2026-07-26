@@ -1,6 +1,5 @@
 package com.settlement.pacing.infrastructure.monitoring;
 
-import com.settlement.pacing.api.gateway.ReservationExecutionStatus;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 
@@ -21,13 +20,11 @@ public class PacingInfrastructureMetrics {
         ).increment();
     }
 
-    public void recordReservation(
-            ReservationExecutionStatus status
-    ) {
+    public void recordReservation(String status) {
         counter(
                 "pacing.infrastructure.reservation",
                 "status",
-                status.name()
+                status
         ).increment();
     }
 

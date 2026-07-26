@@ -2,9 +2,8 @@ package com.settlement.pacing.infrastructure.budget;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 
-import java.time.Instant;
 import java.time.LocalDate;
-import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Optional;
 
 public class BudgetStateRecoveryQueryRepository {
@@ -42,10 +41,32 @@ public class BudgetStateRecoveryQueryRepository {
                 .optional();
     }
 
+    public List<String> findCampaignIdsAfter(
+            String campaignId,
+            int limit
+    ) {
+        if (limit <= 0) {
+            throw new IllegalArgumentException(
+                    "캠페인 조회 limit은 0보다 커야 합니다"
+            );
+        }
+
+        return jdbcClient.sql("""
+                        SELECT campaign_id
+                        FROM campaign
+                        WHERE campaign_id > :campaignId
+                        ORDER BY campaign_id
+                        LIMIT :limit
+                        """)
+                .param("campaignId", campaignId)
+                .param("limit", limit)
+                .query(String.class)
+                .list();
+    }
+
     public BudgetAggregate aggregate(
             String campaignId,
-            LocalDate budgetDate,
-            Instant now
+            LocalDate budgetDate
     ) {
         return jdbcClient.sql("""
                         SELECT COALESCE(SUM(
@@ -57,8 +78,7 @@ public class BudgetStateRecoveryQueryRepository {
                                ), 0) AS total_spent_amount,
                                COALESCE(SUM(
                                    CASE
-                                       WHEN status = 'RESERVED'
-                                            AND expires_at > :now
+                                        WHEN status = 'RESERVED'
                                        THEN amount
                                        ELSE 0
                                    END
@@ -73,9 +93,8 @@ public class BudgetStateRecoveryQueryRepository {
                                ), 0) AS daily_spent_amount,
                                COALESCE(SUM(
                                    CASE
-                                       WHEN budget_date = :budgetDate
-                                            AND status = 'RESERVED'
-                                            AND expires_at > :now
+                                        WHEN budget_date = :budgetDate
+                                             AND status = 'RESERVED'
                                        THEN amount
                                        ELSE 0
                                    END
@@ -85,7 +104,6 @@ public class BudgetStateRecoveryQueryRepository {
                         """)
                 .param("campaignId", campaignId)
                 .param("budgetDate", budgetDate)
-                .param("now", now.atOffset(ZoneOffset.UTC))
                 .query((resultSet, rowNumber) ->
                         new BudgetAggregate(
                                 resultSet.getLong(

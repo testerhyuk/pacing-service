@@ -37,6 +37,7 @@ public interface AuditLogger {
         CAMPAIGN_CHANGE,
         BUDGET_CHANGE,
         PACING_STRATEGY_CHANGE,
+        PEAK_POLICY_CHANGE,
         HMAC_KEY_CHANGE,
         CLIENT_PERMISSION_CHANGE
     }

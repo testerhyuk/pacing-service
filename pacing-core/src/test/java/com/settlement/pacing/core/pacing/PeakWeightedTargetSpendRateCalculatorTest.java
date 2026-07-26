@@ -8,10 +8,12 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
 import java.time.LocalTime;
+import java.time.Duration;
 import java.time.ZoneId;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
+import static org.junit.jupiter.api.Assertions.assertTimeout;
 
 class PeakWeightedTargetSpendRateCalculatorTest {
     private PeakWeightedTargetSpendRateCalculator calculator;
@@ -90,5 +92,27 @@ class PeakWeightedTargetSpendRateCalculatorTest {
         Rate result = calculator.calculate(campaign, campaign.endAt());
 
         assertThat(result).isEqualTo(Rate.full());
+    }
+
+    @Test
+    void 장기_캠페인도_날짜별_반복_없이_빠르게_계산한다() {
+        Campaign longCampaign = new Campaign(
+                "campaign-long",
+                CampaignStatus.ACTIVE,
+                Instant.parse("2020-01-01T00:00:00Z"),
+                Instant.parse("2040-01-01T00:00:00Z"),
+                PacingStrategy.PEAK_WEIGHTED
+        );
+
+        Rate result = assertTimeout(
+                Duration.ofSeconds(1),
+                () -> calculator.calculate(
+                        longCampaign,
+                        Instant.parse("2030-01-01T00:00:00Z")
+                )
+        );
+
+        assertThat(result.value())
+                .isBetween(0.49, 0.51);
     }
 }
