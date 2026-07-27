@@ -5,11 +5,7 @@ import com.settlement.pacing.api.decision.support.SampleRateGenerator;
 import com.settlement.pacing.api.error.BudgetStateUnavailableException;
 import com.settlement.pacing.api.error.CampaignNotFoundException;
 import com.settlement.pacing.api.error.PacingStateUpdateException;
-import com.settlement.pacing.api.gateway.BudgetStateQueryGateway;
-import com.settlement.pacing.api.gateway.CampaignQueryGateway;
-import com.settlement.pacing.api.gateway.PacingStateGateway;
-import com.settlement.pacing.api.gateway.PacingStateSnapshot;
-import com.settlement.pacing.api.gateway.PacingObservationGateway;
+import com.settlement.pacing.api.gateway.*;
 import com.settlement.pacing.api.monitoring.PacingApiMetrics;
 import com.settlement.pacing.core.budget.BudgetState;
 import com.settlement.pacing.core.budget.Money;
@@ -76,17 +72,18 @@ class PacingDecisionServiceTest {
     private PacingState initialPacingState;
     private PacingStateSnapshot initialSnapshot;
     private PacingDecisionCommand command;
+    private DecisionContextQueryGateway decisionContextQueryGateway;
 
     @BeforeEach
     void setUp() {
         campaignQueryGateway = mock(CampaignQueryGateway.class);
         budgetStateQueryGateway = mock(BudgetStateQueryGateway.class);
         pacingStateGateway = mock(PacingStateGateway.class);
-        pacingObservationGateway =
-                mock(PacingObservationGateway.class);
+        pacingObservationGateway = mock(PacingObservationGateway.class);
         pacingEngine = mock(PacingEngine.class);
         sampleRateGenerator = mock(SampleRateGenerator.class);
         pacingApiMetrics = mock(PacingApiMetrics.class);
+        decisionContextQueryGateway = mock(DecisionContextQueryGateway.class);
 
         PacingProperties properties = properties(3);
         Clock clock = Clock.fixed(DECIDED_AT, ZoneOffset.UTC);
@@ -100,7 +97,8 @@ class PacingDecisionServiceTest {
                 sampleRateGenerator,
                 properties,
                 clock,
-                pacingApiMetrics
+                pacingApiMetrics,
+                decisionContextQueryGateway
         );
 
         campaign = new Campaign(
@@ -138,6 +136,57 @@ class PacingDecisionServiceTest {
                 eq(SAMPLE_RATE),
                 eq(PacingObservation.empty())
         )).thenReturn(passResult(initialPacingState));
+        when(decisionContextQueryGateway.find(
+                CAMPAIGN_ID,
+                BUDGET_DATE
+        )).thenReturn(Optional.empty());
+    }
+
+    @Test
+    void 통합_판단_컨텍스트가_있으면_개별_Redis_조회는_하지_않는다() {
+        when(decisionContextQueryGateway.find(
+                CAMPAIGN_ID,
+                BUDGET_DATE
+        )).thenReturn(
+                Optional.of(
+                        new DecisionContextSnapshot(
+                                campaign,
+                                budgetState,
+                                initialSnapshot
+                        )
+                )
+        );
+
+        service.decide(command);
+
+        verify(decisionContextQueryGateway).find(
+                CAMPAIGN_ID,
+                BUDGET_DATE
+        );
+
+        verify(campaignQueryGateway, never())
+                .findById(any(String.class));
+
+        verify(budgetStateQueryGateway, never())
+                .find(
+                        any(String.class),
+                        any(LocalDate.class)
+                );
+
+        verify(pacingStateGateway, never())
+                .getOrInitialize(
+                        any(String.class),
+                        any(PacingState.class)
+                );
+
+        verify(pacingEngine).decide(
+                any(PacingRequest.class),
+                eq(campaign),
+                eq(budgetState),
+                eq(initialPacingState),
+                eq(SAMPLE_RATE),
+                eq(PacingObservation.empty())
+        );
     }
 
     @Test

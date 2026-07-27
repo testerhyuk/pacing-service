@@ -51,7 +51,7 @@ export default function () {
     throw new Error("SECRET and CAMPAIGN_ID are required");
   }
 
-  const path = "/internal/v1/pacing/decisions";
+  const path = "/internal/v1/pacing/decisions/decide";
   const body = JSON.stringify({
     requestId: `${__VU}-${__ITER}-${Date.now()}`,
     campaignId,

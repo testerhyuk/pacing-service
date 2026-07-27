@@ -56,6 +56,9 @@ pacing:
     redis:
       key-prefix: pacing
       campaign-cache-ttl: 30s
+      campaign-cache-load-lock-ttl: 3s
+      campaign-cache-load-wait-timeout: 2s
+      campaign-cache-load-retry-interval: 20ms
       recovery-lock-ttl: 5s
       recovery-wait-timeout: 1s
       recovery-retry-interval: 50ms

@@ -6,11 +6,7 @@ import com.settlement.pacing.api.error.BudgetStateUnavailableException;
 import com.settlement.pacing.api.error.CampaignNotFoundException;
 import com.settlement.pacing.api.error.InvalidRequestException;
 import com.settlement.pacing.api.error.PacingStateUpdateException;
-import com.settlement.pacing.api.gateway.BudgetStateQueryGateway;
-import com.settlement.pacing.api.gateway.CampaignQueryGateway;
-import com.settlement.pacing.api.gateway.PacingStateGateway;
-import com.settlement.pacing.api.gateway.PacingStateSnapshot;
-import com.settlement.pacing.api.gateway.PacingObservationGateway;
+import com.settlement.pacing.api.gateway.*;
 import com.settlement.pacing.api.monitoring.PacingApiMetrics;
 import com.settlement.pacing.core.budget.BudgetState;
 import com.settlement.pacing.core.campaign.Campaign;
@@ -23,6 +19,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -36,6 +33,7 @@ public class PacingDecisionService {
     private final PacingProperties pacingProperties;
     private final Clock clock;
     private final PacingApiMetrics pacingApiMetrics;
+    private final DecisionContextQueryGateway decisionContextQueryGateway;
 
     public PacingDecisionResult decide(PacingDecisionCommand command) {
         Timer.Sample timerSample = pacingApiMetrics.startTimer();
@@ -50,21 +48,26 @@ public class PacingDecisionService {
             Instant processingAt = clock.instant();
             validateRequestTime(command.requestedAt(), processingAt);
 
-            Campaign campaign = campaignQueryGateway.findById(command.campaignId()).orElseThrow(
-                    () -> new CampaignNotFoundException(command.campaignId()));
-
             LocalDate budgetDate = processingAt
-                    .atZone(pacingProperties.businessZoneId())
+                    .atZone(
+                            pacingProperties.businessZoneId()
+                    )
                     .toLocalDate();
 
-            BudgetState budgetState = budgetStateQueryGateway.find(command.campaignId(),  budgetDate).orElseThrow(
-                    BudgetStateUnavailableException::new);
+            DecisionContextSnapshot context =
+                    loadDecisionContext(
+                            command.campaignId(),
+                            budgetDate,
+                            processingAt
+                    );
 
-            Rate initialRate = pacingProperties.initialRate(campaign.pacingStrategy());
-            PacingState initialPacingState =
-                    new PacingState(initialRate, processingAt);
+            Campaign campaign = context.campaign();
 
-            PacingStateSnapshot pacingStateSnapshot = pacingStateGateway.getOrInitialize(command.campaignId(), initialPacingState);
+            BudgetState budgetState =
+                    context.budgetState();
+
+            PacingStateSnapshot pacingStateSnapshot =
+                    context.pacingStateSnapshot();
 
             Rate sampleRate = sampleRateGenerator.generate(command.requestId(), command.campaignId());
 
@@ -124,6 +127,68 @@ public class PacingDecisionService {
 
             throw exception;
         }
+    }
+
+    private DecisionContextSnapshot loadDecisionContext(
+            String campaignId,
+            LocalDate budgetDate,
+            Instant processingAt
+    ) {
+        Optional<DecisionContextSnapshot> context =
+                decisionContextQueryGateway.find(
+                        campaignId,
+                        budgetDate
+                );
+
+        if (context.isPresent()) {
+            return context.get();
+        }
+
+        /*
+         * Redis 통합 조회에서 하나라도 준비되지 않았다면
+         * 기존 복구 경로를 그대로 사용한다.
+         */
+
+        Campaign campaign = campaignQueryGateway
+                .findById(campaignId)
+                .orElseThrow(
+                        () -> new CampaignNotFoundException(
+                                campaignId
+                        )
+                );
+
+        BudgetState budgetState =
+                budgetStateQueryGateway
+                        .find(
+                                campaignId,
+                                budgetDate
+                        )
+                        .orElseThrow(
+                                BudgetStateUnavailableException::new
+                        );
+
+        Rate initialRate =
+                pacingProperties.initialRate(
+                        campaign.pacingStrategy()
+                );
+
+        PacingState initialPacingState =
+                new PacingState(
+                        initialRate,
+                        processingAt
+                );
+
+        PacingStateSnapshot pacingStateSnapshot =
+                pacingStateGateway.getOrInitialize(
+                        campaignId,
+                        initialPacingState
+                );
+
+        return new DecisionContextSnapshot(
+                campaign,
+                budgetState,
+                pacingStateSnapshot
+        );
     }
 
     private void validateRequestTime(

@@ -7,13 +7,7 @@ import com.settlement.pacing.api.decision.application.PacingDecisionService;
 import com.settlement.pacing.api.decision.web.PacingDecisionController;
 import com.settlement.pacing.api.monitoring.PacingApiMetrics;
 import com.settlement.pacing.api.reservation.application.BudgetReservationService;
-import com.settlement.pacing.api.security.CanonicalRequestBuilder;
-import com.settlement.pacing.api.security.ClientPermission;
-import com.settlement.pacing.api.security.ClientRateLimiter;
-import com.settlement.pacing.api.security.HmacAuthenticationFilter;
-import com.settlement.pacing.api.security.HmacSignatureVerifier;
-import com.settlement.pacing.api.security.NonceStore;
-import com.settlement.pacing.api.security.SecurityErrorResponseWriter;
+import com.settlement.pacing.api.security.*;
 import com.settlement.pacing.core.pacing.DecisionReason;
 import com.settlement.pacing.core.pacing.DecisionType;
 import org.junit.jupiter.api.BeforeEach;
@@ -68,9 +62,6 @@ class SecurityConfigurationTest {
     private HmacSignatureVerifier signatureVerifier;
 
     @MockitoBean
-    private NonceStore nonceStore;
-
-    @MockitoBean
     private HmacSecurityProperties properties;
 
     @MockitoBean
@@ -83,7 +74,7 @@ class SecurityConfigurationTest {
     private AuditLogger auditLogger;
 
     @MockitoBean
-    private ClientRateLimiter clientRateLimiter;
+    private RequestAdmissionGateway requestAdmissionGateway;
 
     @BeforeEach
     void setUp() {
@@ -117,13 +108,13 @@ class SecurityConfigurationTest {
                 anyString(),
                 anyString()
         )).thenReturn(true);
-        when(nonceStore.saveIfAbsent(
+        when(requestAdmissionGateway.admit(
                 anyString(),
                 anyString(),
                 any(Duration.class)
-        )).thenReturn(true);
-        when(clientRateLimiter.tryAcquire(anyString()))
-                .thenReturn(true);
+        )).thenReturn(
+                RequestAdmissionGateway.Result.ALLOWED
+        );
         when(pacingDecisionService.decide(
                 any(PacingDecisionCommand.class)
         )).thenReturn(new PacingDecisionResult(

@@ -2,18 +2,8 @@ package com.settlement.pacing.infrastructure;
 
 import com.settlement.pacing.api.audit.AuditLogger;
 import com.settlement.pacing.api.PacingApiApplication;
-import com.settlement.pacing.api.gateway.BudgetReservationGateway;
-import com.settlement.pacing.api.gateway.BudgetStateQueryGateway;
-import com.settlement.pacing.api.gateway.CampaignQueryGateway;
-import com.settlement.pacing.api.gateway.CampaignManagementGateway;
-import com.settlement.pacing.api.gateway.PeakPolicyGateway;
-import com.settlement.pacing.api.gateway.PacingStateGateway;
-import com.settlement.pacing.api.gateway.PacingStateSnapshot;
-import com.settlement.pacing.api.gateway.PacingObservationGateway;
-import com.settlement.pacing.api.gateway.ReservationExecutionResult;
-import com.settlement.pacing.api.gateway.ReservationExecutionStatus;
-import com.settlement.pacing.api.security.ClientRateLimiter;
-import com.settlement.pacing.api.security.NonceStore;
+import com.settlement.pacing.api.gateway.*;
+import com.settlement.pacing.api.security.RequestAdmissionGateway;
 import com.settlement.pacing.core.budget.BudgetReservation;
 import com.settlement.pacing.core.budget.BudgetState;
 import com.settlement.pacing.core.budget.Money;
@@ -25,7 +15,9 @@ import com.settlement.pacing.core.pacing.PeakPolicy;
 import com.settlement.pacing.core.pacing.PeakTimeWindow;
 import com.settlement.pacing.core.pacing.Rate;
 import com.settlement.pacing.core.pacing.TrafficWeight;
+import com.settlement.pacing.infrastructure.campaign.CampaignJpaRepository;
 import com.settlement.pacing.infrastructure.common.RedisKeyFactory;
+import com.settlement.pacing.infrastructure.pacing.PacingStateSnapshotJpaRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -33,6 +25,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -48,13 +41,12 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
+import java.util.Map;
+import java.util.concurrent.*;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.*;
 
 @Testcontainers
 @SpringBootTest(
@@ -65,6 +57,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
                 "spring.flyway.enabled=true",
                 "pacing.infrastructure.redis.key-prefix=test-pacing",
                 "pacing.infrastructure.redis.campaign-cache-ttl=30s",
+                "pacing.infrastructure.redis.campaign-cache-load-lock-ttl=3s",
+                "pacing.infrastructure.redis.campaign-cache-load-wait-timeout=2s",
+                "pacing.infrastructure.redis.campaign-cache-load-retry-interval=20ms",
                 "pacing.infrastructure.redis.recovery-lock-ttl=5s",
                 "pacing.infrastructure.redis.recovery-wait-timeout=2s",
                 "pacing.infrastructure.redis.recovery-retry-interval=20ms",
@@ -148,10 +143,7 @@ class InfrastructureIntegrationTest {
     private PacingObservationGateway pacingObservationGateway;
 
     @Autowired
-    private NonceStore nonceStore;
-
-    @Autowired
-    private ClientRateLimiter clientRateLimiter;
+    private RequestAdmissionGateway requestAdmissionGateway;
 
     @Autowired
     private AuditLogger auditLogger;
@@ -168,6 +160,196 @@ class InfrastructureIntegrationTest {
     @Autowired
     private Clock clock;
 
+    @MockitoSpyBean
+    private CampaignJpaRepository campaignRepository;
+
+    @MockitoSpyBean
+    private PacingStateSnapshotJpaRepository pacingStateSnapshotRepository;
+
+    @Autowired
+    private DecisionContextQueryGateway decisionContextQueryGateway;
+
+    @Test
+    void 판단_컨텍스트는_캠페인_예산_페이싱_상태를_한번에_조회한다() {
+        String campaignId =
+                "decision-context-integration";
+
+        insertCampaign(
+                campaignId,
+                1_000L,
+                500L
+        );
+
+        Campaign campaign =
+                campaignQueryGateway
+                        .findById(campaignId)
+                        .orElseThrow();
+
+        BudgetState budgetState =
+                budgetStateQueryGateway
+                        .find(
+                                campaignId,
+                                BUDGET_DATE
+                        )
+                        .orElseThrow();
+
+        PacingStateSnapshot pacingSnapshot =
+                pacingStateGateway.getOrInitialize(
+                        campaignId,
+                        new PacingState(
+                                new Rate(0.4),
+                                NOW
+                        )
+                );
+
+        DecisionContextSnapshot context =
+                decisionContextQueryGateway
+                        .find(
+                                campaignId,
+                                BUDGET_DATE
+                        )
+                        .orElseThrow();
+
+        assertThat(context.campaign())
+                .isEqualTo(campaign);
+
+        assertThat(context.budgetState())
+                .isEqualTo(budgetState);
+
+        assertThat(context.pacingStateSnapshot())
+                .isEqualTo(pacingSnapshot);
+    }
+
+    @Test
+    void Rate_Limit은_capacity까지만_허용한다() {
+        redisTemplate.delete(
+                keyFactory.rateLimit("test-client")
+        );
+
+        assertThat(requestAdmissionGateway.admit(
+                "test-client",
+                "nonce-rate-1",
+                Duration.ofMinutes(2)
+        )).isEqualTo(
+                RequestAdmissionGateway.Result.ALLOWED
+        );
+
+        assertThat(requestAdmissionGateway.admit(
+                "test-client",
+                "nonce-rate-2",
+                Duration.ofMinutes(2)
+        )).isEqualTo(
+                RequestAdmissionGateway.Result.ALLOWED
+        );
+
+        assertThat(requestAdmissionGateway.admit(
+                "test-client",
+                "nonce-rate-3",
+                Duration.ofMinutes(2)
+        )).isEqualTo(
+                RequestAdmissionGateway.Result.RATE_LIMITED
+        );
+    }
+
+    @Test
+    void 동일한_페이싱_버전은_동시_요청에서도_DB에_한_번만_저장한다()
+            throws Exception {
+        String campaignId = "pacing-snapshot-single-flight";
+        int requestCount = 64;
+        long version = 7L;
+
+        PacingState initialState = new PacingState(
+                new Rate(0.1),
+                NOW.minusSeconds(10)
+        );
+
+        insertCampaign(
+                campaignId,
+                1_000L,
+                500L
+        );
+
+        jdbcClient.sql("""
+                    DELETE FROM pacing_state_snapshot
+                    WHERE campaign_id = :campaignId
+                    """)
+                .param("campaignId", campaignId)
+                .update();
+
+        redisTemplate.delete(keyFactory.pacingState(campaignId));
+
+        redisTemplate.opsForHash().putAll(
+                keyFactory.pacingState(campaignId),
+                Map.of(
+                        "pacingRate", "0.5",
+                        "updatedAtEpochMillis",
+                        Long.toString(NOW.toEpochMilli()),
+                        "version",
+                        Long.toString(version)
+                )
+        );
+
+        clearInvocations(pacingStateSnapshotRepository);
+
+        ExecutorService executorService =
+                Executors.newFixedThreadPool(requestCount);
+
+        CountDownLatch ready = new CountDownLatch(requestCount);
+        CountDownLatch start = new CountDownLatch(1);
+
+        List<Future<PacingStateSnapshot>> futures =
+                new ArrayList<>();
+
+        try {
+            for (int index = 0; index < requestCount; index++) {
+                futures.add(executorService.submit(() -> {
+                    ready.countDown();
+
+                    if (!start.await(5, TimeUnit.SECONDS)) {
+                        throw new IllegalStateException(
+                                "동시 요청 시작 대기 시간이 초과됐습니다"
+                        );
+                    }
+
+                    return pacingStateGateway.getOrInitialize(
+                            campaignId,
+                            initialState
+                    );
+                }));
+            }
+
+            assertThat(
+                    ready.await(5, TimeUnit.SECONDS)
+            ).isTrue();
+
+            start.countDown();
+
+            for (Future<PacingStateSnapshot> future : futures) {
+                PacingStateSnapshot snapshot =
+                        future.get(5, TimeUnit.SECONDS);
+
+                assertThat(snapshot.version())
+                        .isEqualTo(version);
+
+                assertThat(snapshot.pacingState().pacingRate())
+                        .isEqualTo(new Rate(0.5));
+            }
+
+            verify(
+                    pacingStateSnapshotRepository,
+                    times(1)
+            ).saveIfNewer(
+                    eq(campaignId),
+                    eq(0.5),
+                    eq(NOW),
+                    eq(version),
+                    any(Instant.class)
+            );
+        } finally {
+            executorService.shutdownNow();
+        }
+    }
+
     @Test
     void 자동_설정으로_모든_API_포트가_조립된다() {
         assertThat(campaignQueryGateway).isNotNull();
@@ -175,9 +357,9 @@ class InfrastructureIntegrationTest {
         assertThat(budgetReservationGateway).isNotNull();
         assertThat(pacingStateGateway).isNotNull();
         assertThat(pacingObservationGateway).isNotNull();
-        assertThat(nonceStore).isNotNull();
-        assertThat(clientRateLimiter).isNotNull();
         assertThat(auditLogger).isNotNull();
+        assertThat(requestAdmissionGateway).isNotNull();
+        assertThat(decisionContextQueryGateway).isNotNull();
     }
 
     @Test
@@ -598,27 +780,78 @@ class InfrastructureIntegrationTest {
     }
 
     @Test
-    void nonce는_TTL_동안_한_번만_저장된다() {
-        assertThat(nonceStore.saveIfAbsent(
-                "test-client",
-                "nonce-1",
-                Duration.ofMinutes(2)
-        )).isTrue();
-        assertThat(nonceStore.saveIfAbsent(
-                "test-client",
-                "nonce-1",
-                Duration.ofMinutes(2)
-        )).isFalse();
+    void 동일한_nonce는_두_번째_요청부터_거절한다() {
+        String clientId = "test-client";
+        String nonce = "nonce-duplicate-test";
+
+        redisTemplate.delete(List.of(
+                keyFactory.nonce(clientId, nonce),
+                keyFactory.rateLimit(clientId)
+        ));
+
+        RequestAdmissionGateway.Result first =
+                requestAdmissionGateway.admit(
+                        clientId,
+                        nonce,
+                        Duration.ofMinutes(2)
+                );
+
+        RequestAdmissionGateway.Result second =
+                requestAdmissionGateway.admit(
+                        clientId,
+                        nonce,
+                        Duration.ofMinutes(2)
+                );
+
+        assertThat(first)
+                .isEqualTo(
+                        RequestAdmissionGateway.Result.ALLOWED
+                );
+
+        assertThat(second)
+                .isEqualTo(
+                        RequestAdmissionGateway.Result.NONCE_REUSED
+                );
     }
 
     @Test
     void Rate_Limit은_설정된_capacity까지만_허용한다() {
-        assertThat(clientRateLimiter.tryAcquire("test-client"))
-                .isTrue();
-        assertThat(clientRateLimiter.tryAcquire("test-client"))
-                .isTrue();
-        assertThat(clientRateLimiter.tryAcquire("test-client"))
-                .isFalse();
+        String clientId = "test-client";
+
+        String nonce1 = "rate-limit-nonce-1";
+        String nonce2 = "rate-limit-nonce-2";
+        String nonce3 = "rate-limit-nonce-3";
+
+        redisTemplate.delete(List.of(
+                keyFactory.rateLimit(clientId),
+                keyFactory.nonce(clientId, nonce1),
+                keyFactory.nonce(clientId, nonce2),
+                keyFactory.nonce(clientId, nonce3)
+        ));
+
+        assertThat(requestAdmissionGateway.admit(
+                clientId,
+                nonce1,
+                Duration.ofMinutes(2)
+        )).isEqualTo(
+                RequestAdmissionGateway.Result.ALLOWED
+        );
+
+        assertThat(requestAdmissionGateway.admit(
+                clientId,
+                nonce2,
+                Duration.ofMinutes(2)
+        )).isEqualTo(
+                RequestAdmissionGateway.Result.ALLOWED
+        );
+
+        assertThat(requestAdmissionGateway.admit(
+                clientId,
+                nonce3,
+                Duration.ofMinutes(2)
+        )).isEqualTo(
+                RequestAdmissionGateway.Result.RATE_LIMITED
+        );
     }
 
     @Test
@@ -733,6 +966,71 @@ class InfrastructureIntegrationTest {
                 com.settlement.pacing.api.error
                         .BudgetLimitConflictException.class
         );
+    }
+
+    @Test
+    void 동시_캐시_미스에서도_캠페인은_DB에서_한_번만_조회한다()
+            throws Exception {
+        String campaignId = "campaign-cache-stampede";
+        int requestCount = 64;
+
+        insertCampaign(campaignId, 1_000L, 500L);
+
+        redisTemplate.delete(
+                keyFactory.campaign(campaignId)
+        );
+        redisTemplate.delete(
+                keyFactory.campaignCacheLoadLock(campaignId)
+        );
+
+        clearInvocations(campaignRepository);
+
+        ExecutorService executorService =
+                Executors.newFixedThreadPool(requestCount);
+
+        CountDownLatch ready = new CountDownLatch(requestCount);
+        CountDownLatch start = new CountDownLatch(1);
+
+        List<Future<Campaign>> futures = new ArrayList<>();
+
+        try {
+            for (int index = 0; index < requestCount; index++) {
+                futures.add(executorService.submit(() -> {
+                    ready.countDown();
+
+                    if (!start.await(5, TimeUnit.SECONDS)) {
+                        throw new IllegalStateException(
+                                "동시 조회 시작을 기다리는 시간이 초과됐습니다"
+                        );
+                    }
+
+                    return campaignQueryGateway
+                            .findById(campaignId)
+                            .orElseThrow();
+                }));
+            }
+
+            assertThat(
+                    ready.await(5, TimeUnit.SECONDS)
+            ).isTrue();
+
+            start.countDown();
+
+            for (Future<Campaign> future : futures) {
+                Campaign campaign =
+                        future.get(5, TimeUnit.SECONDS);
+
+                assertThat(campaign.campaignId())
+                        .isEqualTo(campaignId);
+            }
+
+            verify(
+                    campaignRepository,
+                    times(1)
+            ).findById(campaignId);
+        } finally {
+            executorService.shutdownNow();
+        }
     }
 
     private void insertCampaign(

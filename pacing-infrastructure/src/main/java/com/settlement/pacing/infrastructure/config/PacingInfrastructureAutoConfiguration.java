@@ -3,15 +3,8 @@ package com.settlement.pacing.infrastructure.config;
 import com.settlement.pacing.api.audit.AuditLogger;
 import com.settlement.pacing.api.config.HmacSecurityProperties;
 import com.settlement.pacing.api.config.PacingProperties;
-import com.settlement.pacing.api.gateway.BudgetReservationGateway;
-import com.settlement.pacing.api.gateway.BudgetStateQueryGateway;
-import com.settlement.pacing.api.gateway.CampaignQueryGateway;
-import com.settlement.pacing.api.gateway.CampaignManagementGateway;
-import com.settlement.pacing.api.gateway.PacingStateGateway;
-import com.settlement.pacing.api.gateway.PacingObservationGateway;
-import com.settlement.pacing.api.gateway.PeakPolicyGateway;
-import com.settlement.pacing.api.security.ClientRateLimiter;
-import com.settlement.pacing.api.security.NonceStore;
+import com.settlement.pacing.api.gateway.*;
+import com.settlement.pacing.api.security.RequestAdmissionGateway;
 import com.settlement.pacing.infrastructure.audit.AuditLogJpaRepository;
 import com.settlement.pacing.infrastructure.audit.AuditLogSanitizer;
 import com.settlement.pacing.infrastructure.audit.PostgresAuditLogger;
@@ -23,22 +16,13 @@ import com.settlement.pacing.infrastructure.budget.RedisBudgetReservationAdapter
 import com.settlement.pacing.infrastructure.budget.RedisBudgetStateQueryAdapter;
 import com.settlement.pacing.infrastructure.budget.RedisBudgetStateStore;
 import com.settlement.pacing.infrastructure.budget.ReservationPersistenceService;
-import com.settlement.pacing.infrastructure.campaign.CampaignJpaRepository;
-import com.settlement.pacing.infrastructure.campaign.CampaignMapper;
-import com.settlement.pacing.infrastructure.campaign.CampaignManagementAdapter;
-import com.settlement.pacing.infrastructure.campaign.CampaignQueryAdapter;
-import com.settlement.pacing.infrastructure.campaign.RedisCampaignCache;
+import com.settlement.pacing.infrastructure.campaign.*;
 import com.settlement.pacing.infrastructure.common.RedisKeyFactory;
 import com.settlement.pacing.infrastructure.common.RedisRecoveryLock;
-import com.settlement.pacing.infrastructure.pacing.PacingStateSnapshotJpaRepository;
-import com.settlement.pacing.infrastructure.pacing.PacingStateSnapshotStore;
-import com.settlement.pacing.infrastructure.pacing.PeakPolicyJpaRepository;
-import com.settlement.pacing.infrastructure.pacing.PostgresPeakPolicyAdapter;
-import com.settlement.pacing.infrastructure.pacing.RedisPacingStateAdapter;
-import com.settlement.pacing.infrastructure.pacing.RedisPacingObservationAdapter;
+import com.settlement.pacing.infrastructure.decision.RedisDecisionContextQueryAdapter;
+import com.settlement.pacing.infrastructure.pacing.*;
 import com.settlement.pacing.infrastructure.monitoring.PacingInfrastructureMetrics;
-import com.settlement.pacing.infrastructure.security.RedisClientRateLimiter;
-import com.settlement.pacing.infrastructure.security.RedisNonceStore;
+import com.settlement.pacing.infrastructure.security.RedisRequestAdmissionAdapter;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
@@ -109,12 +93,16 @@ public class PacingInfrastructureAutoConfiguration {
     public CampaignQueryGateway campaignQueryGateway(
             CampaignJpaRepository repository,
             CampaignMapper mapper,
-            RedisCampaignCache cache
+            RedisCampaignCache cache,
+            RedisCampaignCacheLoadLock cacheLoadLock,
+            RedisInfrastructureProperties properties
     ) {
         return new CampaignQueryAdapter(
                 repository,
                 mapper,
-                cache
+                cache,
+                cacheLoadLock,
+                properties
         );
     }
 
@@ -210,7 +198,20 @@ public class PacingInfrastructureAutoConfiguration {
             PacingStateSnapshotJpaRepository repository,
             Clock clock
     ) {
-        return new PacingStateSnapshotStore(repository, clock);
+        return new PacingStateSnapshotStore(
+                repository,
+                clock
+        );
+    }
+
+    @Bean
+    public PacingStateSnapshotPersistenceCoordinator
+    pacingStateSnapshotPersistenceCoordinator(
+            PacingStateSnapshotStore snapshotStore
+    ) {
+        return new PacingStateSnapshotPersistenceCoordinator(
+                snapshotStore
+        );
     }
 
     @Bean
@@ -257,6 +258,8 @@ public class PacingInfrastructureAutoConfiguration {
             @Qualifier("compareAndSetPacingStateScript")
             RedisScript<List> compareAndSetScript,
             PacingStateSnapshotStore snapshotStore,
+            PacingStateSnapshotPersistenceCoordinator
+                    snapshotPersistenceCoordinator,
             PacingInfrastructureMetrics metrics
     ) {
         return new RedisPacingStateAdapter(
@@ -265,6 +268,7 @@ public class PacingInfrastructureAutoConfiguration {
                 getOrInitializeScript,
                 compareAndSetScript,
                 snapshotStore,
+                snapshotPersistenceCoordinator,
                 metrics
         );
     }
@@ -313,34 +317,20 @@ public class PacingInfrastructureAutoConfiguration {
     }
 
     @Bean
-    @ConditionalOnMissingBean(NonceStore.class)
-    public NonceStore nonceStore(
-            StringRedisTemplate redisTemplate,
-            RedisKeyFactory keyFactory,
-            PacingInfrastructureMetrics metrics
-    ) {
-        return new RedisNonceStore(
-                redisTemplate,
-                keyFactory,
-                metrics
-        );
-    }
-
-    @Bean
-    @ConditionalOnMissingBean(ClientRateLimiter.class)
-    public ClientRateLimiter clientRateLimiter(
+    @ConditionalOnMissingBean(RequestAdmissionGateway.class)
+    public RequestAdmissionGateway requestAdmissionGateway(
             StringRedisTemplate redisTemplate,
             RedisKeyFactory keyFactory,
             RateLimitProperties properties,
-            @Qualifier("rateLimitTokenBucketScript")
-            RedisScript<Long> tokenBucketScript,
+            @Qualifier("admitRequestScript")
+            RedisScript<String> admitRequestScript,
             PacingInfrastructureMetrics metrics
     ) {
-        return new RedisClientRateLimiter(
+        return new RedisRequestAdmissionAdapter(
                 redisTemplate,
                 keyFactory,
                 properties,
-                tokenBucketScript,
+                admitRequestScript,
                 metrics
         );
     }
@@ -373,6 +363,42 @@ public class PacingInfrastructureAutoConfiguration {
                 repository,
                 sanitizer,
                 clock
+        );
+    }
+
+    @Bean
+    public RedisCampaignCacheLoadLock redisCampaignCacheLoadLock(
+            StringRedisTemplate redisTemplate,
+            RedisKeyFactory keyFactory,
+            RedisInfrastructureProperties properties,
+            @Qualifier("releaseLockScript")
+            RedisScript<Long> releaseLockScript
+    ) {
+        return new RedisCampaignCacheLoadLock(
+                redisTemplate,
+                keyFactory,
+                properties,
+                releaseLockScript
+        );
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(DecisionContextQueryGateway.class)
+    public DecisionContextQueryGateway decisionContextQueryGateway(
+            StringRedisTemplate redisTemplate,
+            RedisKeyFactory keyFactory,
+            @Qualifier("readDecisionContextScript")
+            RedisScript<List> readDecisionContextScript,
+            RedisCampaignCache campaignCache,
+            PacingStateSnapshotPersistenceCoordinator
+                    snapshotPersistenceCoordinator
+    ) {
+        return new RedisDecisionContextQueryAdapter(
+                redisTemplate,
+                keyFactory,
+                readDecisionContextScript,
+                campaignCache,
+                snapshotPersistenceCoordinator
         );
     }
 }

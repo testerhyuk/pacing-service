@@ -25,7 +25,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -57,25 +56,23 @@ class HmacAuthenticationFilterTest {
 
     private CanonicalRequestBuilder canonicalRequestBuilder;
     private HmacSignatureVerifier signatureVerifier;
-    private NonceStore nonceStore;
     private PacingApiMetrics metrics;
     private AuditLogger auditLogger;
-    private ClientRateLimiter clientRateLimiter;
     private SecurityErrorResponseWriter errorResponseWriter;
     private FilterChain filterChain;
     private HmacAuthenticationFilter filter;
     private HmacSecurityProperties properties;
+    private RequestAdmissionGateway requestAdmissionGateway;
 
     @BeforeEach
     void setUp() throws IOException {
         canonicalRequestBuilder = mock(CanonicalRequestBuilder.class);
         signatureVerifier = mock(HmacSignatureVerifier.class);
-        nonceStore = mock(NonceStore.class);
         metrics = mock(PacingApiMetrics.class);
         auditLogger = mock(AuditLogger.class);
-        clientRateLimiter = mock(ClientRateLimiter.class);
         errorResponseWriter = mock(SecurityErrorResponseWriter.class);
         filterChain = mock(FilterChain.class);
+        requestAdmissionGateway = mock(RequestAdmissionGateway.class);
 
         properties = properties(Set.of(
                 ClientPermission.PACING_DECIDE,
@@ -85,13 +82,12 @@ class HmacAuthenticationFilterTest {
         filter = new HmacAuthenticationFilter(
                 canonicalRequestBuilder,
                 signatureVerifier,
-                nonceStore,
                 properties,
                 Clock.fixed(NOW, ZoneOffset.UTC),
                 metrics,
                 auditLogger,
-                clientRateLimiter,
-                errorResponseWriter
+                errorResponseWriter,
+                requestAdmissionGateway
         );
 
         when(canonicalRequestBuilder.build(
@@ -107,13 +103,13 @@ class HmacAuthenticationFilterTest {
                 SIGNATURE,
                 CURRENT_KEY
         )).thenReturn(true);
-        when(nonceStore.saveIfAbsent(
+        when(requestAdmissionGateway.admit(
                 CLIENT_ID,
                 NONCE,
                 Duration.ofMinutes(2)
-        )).thenReturn(true);
-        when(clientRateLimiter.tryAcquire(CLIENT_ID))
-                .thenReturn(true);
+        )).thenReturn(
+                RequestAdmissionGateway.Result.ALLOWED
+        );
 
         doAnswer(invocation -> {
             HttpServletResponse response = invocation.getArgument(0);
@@ -308,7 +304,7 @@ class HmacAuthenticationFilterTest {
         verify(metrics).recordAuthenticationFailure(
                 "INVALID_SIGNATURE"
         );
-        verify(nonceStore, never()).saveIfAbsent(
+        verify(requestAdmissionGateway, never()).admit(
                 anyString(),
                 anyString(),
                 any(Duration.class)
@@ -344,11 +340,14 @@ class HmacAuthenticationFilterTest {
 
     @Test
     void 재사용된_nonce는_401로_거절한다() throws Exception {
-        when(nonceStore.saveIfAbsent(
+        when(requestAdmissionGateway.admit(
                 CLIENT_ID,
                 NONCE,
                 Duration.ofMinutes(2)
-        )).thenReturn(false);
+        )).thenReturn(
+                RequestAdmissionGateway.Result.NONCE_REUSED
+        );
+
         MockHttpServletResponse response =
                 new MockHttpServletResponse();
 
@@ -359,18 +358,27 @@ class HmacAuthenticationFilterTest {
         );
 
         assertThat(response.getStatus()).isEqualTo(401);
+
         verify(metrics).recordAuthenticationFailure(
                 "NONCE_REUSED"
         );
-        verify(clientRateLimiter, never())
-                .tryAcquire(anyString());
+
+        verify(filterChain, never()).doFilter(
+                any(),
+                any()
+        );
     }
 
     @Test
     void Rate_Limit을_초과하면_429로_거절한다()
             throws Exception {
-        when(clientRateLimiter.tryAcquire(CLIENT_ID))
-                .thenReturn(false);
+        when(requestAdmissionGateway.admit(
+                CLIENT_ID,
+                NONCE,
+                Duration.ofMinutes(2)
+        )).thenReturn(
+                RequestAdmissionGateway.Result.RATE_LIMITED
+        );
         MockHttpServletResponse response =
                 new MockHttpServletResponse();
 
@@ -392,43 +400,18 @@ class HmacAuthenticationFilterTest {
     }
 
     @Test
-    void nonce_저장소_장애는_503으로_응답한다()
+    void 요청_허용_저장소_장애는_503으로_응답한다()
             throws Exception {
-        when(nonceStore.saveIfAbsent(
+        when(requestAdmissionGateway.admit(
                 CLIENT_ID,
                 NONCE,
                 Duration.ofMinutes(2)
-        )).thenThrow(new DataAccessResourceFailureException(
-                "Redis unavailable"
-        ));
-        MockHttpServletResponse response =
-                new MockHttpServletResponse();
-
-        filter.doFilter(
-                signedRequest(),
-                response,
-                filterChain
-        );
-
-        assertThat(response.getStatus()).isEqualTo(503);
-        verify(errorResponseWriter).write(
-                response,
-                HttpStatus.SERVICE_UNAVAILABLE,
-                ErrorCode.STORAGE_UNAVAILABLE,
-                "인증 상태 저장소를 사용할 수 없습니다",
-                PATH
-        );
-        verify(clientRateLimiter, never())
-                .tryAcquire(anyString());
-    }
-
-    @Test
-    void Rate_Limit_저장소_장애는_503으로_응답한다()
-            throws Exception {
-        when(clientRateLimiter.tryAcquire(CLIENT_ID))
-                .thenThrow(new DataAccessResourceFailureException(
+        )).thenThrow(
+                new DataAccessResourceFailureException(
                         "Redis unavailable"
-                ));
+                )
+        );
+
         MockHttpServletResponse response =
                 new MockHttpServletResponse();
 
@@ -439,6 +422,7 @@ class HmacAuthenticationFilterTest {
         );
 
         assertThat(response.getStatus()).isEqualTo(503);
+
         verify(errorResponseWriter).write(
                 response,
                 HttpStatus.SERVICE_UNAVAILABLE,
@@ -446,6 +430,7 @@ class HmacAuthenticationFilterTest {
                 "인증 상태 저장소를 사용할 수 없습니다",
                 PATH
         );
+
         verify(filterChain, never()).doFilter(
                 any(),
                 any()
