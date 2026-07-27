@@ -214,9 +214,9 @@ public class RedisKeyFactory {
             String nonce
     ) {
         return keyPrefix
-                + ":nonce:"
+                + ":nonce:{"
                 + encode(clientId)
-                + ":"
+                + "}:"
                 + encode(nonce);
     }
 
@@ -225,8 +225,9 @@ public class RedisKeyFactory {
      */
     public String rateLimit(String clientId) {
         return keyPrefix
-                + ":rate-limit:"
-                + encode(clientId);
+                + ":rate-limit:{"
+                + encode(clientId)
+                + "}";
     }
 
     private String encode(String value) {
@@ -252,5 +253,15 @@ public class RedisKeyFactory {
             String campaignId,
             String reservationId
     ) {
+    }
+
+    /**
+     * 캠페인 캐시를 채우는 요청을 하나로 제한하는 Lock 키를 생성한다.
+     */
+    public String campaignCacheLoadLock(String campaignId) {
+        return keyPrefix
+                + ":campaign-cache-load-lock:{"
+                + encode(campaignId)
+                + "}";
     }
 }

@@ -3,13 +3,7 @@ package com.settlement.pacing.api.config;
 import com.settlement.pacing.api.audit.AuditLogger;
 import com.settlement.pacing.api.error.ErrorCode;
 import com.settlement.pacing.api.monitoring.PacingApiMetrics;
-import com.settlement.pacing.api.security.CanonicalRequestBuilder;
-import com.settlement.pacing.api.security.ClientRateLimiter;
-import com.settlement.pacing.api.security.ClientPermission;
-import com.settlement.pacing.api.security.HmacAuthenticationFilter;
-import com.settlement.pacing.api.security.HmacSignatureVerifier;
-import com.settlement.pacing.api.security.NonceStore;
-import com.settlement.pacing.api.security.SecurityErrorResponseWriter;
+import com.settlement.pacing.api.security.*;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,25 +30,23 @@ public class SecurityConfiguration {
             HttpSecurity http,
             CanonicalRequestBuilder canonicalRequestBuilder,
             HmacSignatureVerifier signatureVerifier,
-            NonceStore nonceStore,
             HmacSecurityProperties properties,
             Clock clock,
             PacingApiMetrics metrics,
             AuditLogger auditLogger,
-            ClientRateLimiter clientRateLimiter,
-            SecurityErrorResponseWriter errorResponseWriter
+            SecurityErrorResponseWriter errorResponseWriter,
+            RequestAdmissionGateway requestAdmissionGateway
     ) throws Exception {
         HmacAuthenticationFilter hmacAuthenticationFilter =
                 new HmacAuthenticationFilter(
                         canonicalRequestBuilder,
                         signatureVerifier,
-                        nonceStore,
                         properties,
                         clock,
                         metrics,
                         auditLogger,
-                        clientRateLimiter,
-                        errorResponseWriter
+                        errorResponseWriter,
+                        requestAdmissionGateway
                 );
 
         http

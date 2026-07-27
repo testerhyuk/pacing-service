@@ -45,34 +45,31 @@ public class HmacAuthenticationFilter
 
     private final CanonicalRequestBuilder canonicalRequestBuilder;
     private final HmacSignatureVerifier signatureVerifier;
-    private final NonceStore nonceStore;
     private final HmacSecurityProperties properties;
     private final Clock clock;
     private final PacingApiMetrics metrics;
     private final AuditLogger auditLogger;
-    private final ClientRateLimiter clientRateLimiter;
     private final SecurityErrorResponseWriter errorResponseWriter;
+    private final RequestAdmissionGateway requestAdmissionGateway;
 
     public HmacAuthenticationFilter(
             CanonicalRequestBuilder canonicalRequestBuilder,
             HmacSignatureVerifier signatureVerifier,
-            NonceStore nonceStore,
             HmacSecurityProperties properties,
             Clock clock,
             PacingApiMetrics metrics,
             AuditLogger auditLogger,
-            ClientRateLimiter clientRateLimiter,
-            SecurityErrorResponseWriter errorResponseWriter
+            SecurityErrorResponseWriter errorResponseWriter,
+            RequestAdmissionGateway requestAdmissionGateway
     ) {
         this.canonicalRequestBuilder = canonicalRequestBuilder;
         this.signatureVerifier = signatureVerifier;
-        this.nonceStore = nonceStore;
         this.properties = properties;
         this.clock = clock;
         this.metrics = metrics;
         this.auditLogger = auditLogger;
-        this.clientRateLimiter = clientRateLimiter;
         this.errorResponseWriter = errorResponseWriter;
+        this.requestAdmissionGateway = requestAdmissionGateway;
     }
 
     @Override
@@ -178,9 +175,10 @@ public class HmacAuthenticationFilter
             return;
         }
 
-        boolean nonceSaved;
+        RequestAdmissionGateway.Result admissionResult;
+
         try {
-            nonceSaved = nonceStore.saveIfAbsent(
+            admissionResult = requestAdmissionGateway.admit(
                     clientId,
                     nonce,
                     properties.nonceTtl()
@@ -189,13 +187,14 @@ public class HmacAuthenticationFilter
             rejectStorageUnavailable(
                     request,
                     response,
-                    "nonce 저장소",
+                    "요청 허용 저장소",
                     exception
             );
             return;
         }
 
-        if (!nonceSaved) {
+        if (admissionResult
+                == RequestAdmissionGateway.Result.NONCE_REUSED) {
             reject(
                     request,
                     response,
@@ -206,22 +205,10 @@ public class HmacAuthenticationFilter
             return;
         }
 
-        boolean rateLimitAllowed;
-        try {
-            rateLimitAllowed =
-                    clientRateLimiter.tryAcquire(clientId);
-        } catch (DataAccessException exception) {
-            rejectStorageUnavailable(
-                    request,
-                    response,
-                    "Rate Limit 저장소",
-                    exception
-            );
-            return;
-        }
-
-        if (!rateLimitAllowed) {
+        if (admissionResult
+                == RequestAdmissionGateway.Result.RATE_LIMITED) {
             metrics.recordRateLimitRejection(clientId);
+
             errorResponseWriter.write(
                     response,
                     HttpStatus.TOO_MANY_REQUESTS,
@@ -232,6 +219,10 @@ public class HmacAuthenticationFilter
             return;
         }
 
+        /*
+         * 여기 도달했다는 것은 ALLOWED.
+         * 기존 인증 성공 처리를 그대로 수행한다.
+         */
         List<SimpleGrantedAuthority> authorities =
                 client.permissions()
                         .stream()
@@ -251,7 +242,9 @@ public class HmacAuthenticationFilter
 
         SecurityContext securityContext =
                 SecurityContextHolder.createEmptyContext();
+
         securityContext.setAuthentication(authentication);
+
         SecurityContextHolder.setContext(securityContext);
 
         filterChain.doFilter(cachedRequest, response);

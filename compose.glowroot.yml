@@ -1,0 +1,16 @@
+services:
+  pacing-api:
+    environment:
+      JAVA_TOOL_OPTIONS: -javaagent:/opt/glowroot/glowroot.jar
+    volumes:
+      - ./.glowroot/pacing-api:/opt/glowroot
+    ports:
+      - "127.0.0.1:${PACING_GLOWROOT_API_PORT:-4000}:4000"
+
+  pacing-worker:
+    environment:
+      JAVA_TOOL_OPTIONS: -javaagent:/opt/glowroot/glowroot.jar
+    volumes:
+      - ./.glowroot/pacing-worker:/opt/glowroot
+    ports:
+      - "127.0.0.1:${PACING_GLOWROOT_WORKER_PORT:-4001}:4000"

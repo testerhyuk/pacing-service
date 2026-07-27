@@ -16,6 +16,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class RedisPacingStateAdapter
         implements PacingStateGateway {
@@ -26,9 +28,9 @@ public class RedisPacingStateAdapter
     private final RedisScript<List> getOrInitializeScript;
     private final RedisScript<List> compareAndSetScript;
     private final PacingStateSnapshotStore snapshotStore;
+    private final PacingStateSnapshotPersistenceCoordinator snapshotPersistenceCoordinator;
+
     private final PacingInfrastructureMetrics metrics;
-    private final ConcurrentMap<String, Long> persistedVersions =
-            new ConcurrentHashMap<>();
 
     public RedisPacingStateAdapter(
             StringRedisTemplate redisTemplate,
@@ -36,6 +38,7 @@ public class RedisPacingStateAdapter
             RedisScript<List> getOrInitializeScript,
             RedisScript<List> compareAndSetScript,
             PacingStateSnapshotStore snapshotStore,
+            PacingStateSnapshotPersistenceCoordinator snapshotPersistenceCoordinator,
             PacingInfrastructureMetrics metrics
     ) {
         this.redisTemplate = redisTemplate;
@@ -43,6 +46,7 @@ public class RedisPacingStateAdapter
         this.getOrInitializeScript = getOrInitializeScript;
         this.compareAndSetScript = compareAndSetScript;
         this.snapshotStore = snapshotStore;
+        this.snapshotPersistenceCoordinator = snapshotPersistenceCoordinator;
         this.metrics = metrics;
     }
 
@@ -63,7 +67,10 @@ public class RedisPacingStateAdapter
                 readFromRedis(campaignId);
 
         if (current.isPresent()) {
-            persistSnapshotIfNeeded(campaignId, current.get());
+            snapshotPersistenceCoordinator.persistIfNeeded(
+                    campaignId,
+                    current.get()
+            );
             return current.get();
         }
 
@@ -77,8 +84,12 @@ public class RedisPacingStateAdapter
                 campaignId,
                 fallback
         );
-        snapshotStore.saveIfNewer(campaignId, actual);
-        persistedVersions.put(campaignId, actual.version());
+
+        snapshotPersistenceCoordinator.persistIfNeeded(
+                campaignId,
+                actual
+        );
+
         return actual;
     }
 
@@ -92,7 +103,7 @@ public class RedisPacingStateAdapter
                 readFromRedis(campaignId);
 
         if (redisSnapshot.isPresent()) {
-            persistSnapshotIfNeeded(
+            snapshotPersistenceCoordinator.persistIfNeeded(
                     campaignId,
                     redisSnapshot.get()
             );
@@ -166,8 +177,12 @@ public class RedisPacingStateAdapter
                 newState,
                 result.version()
         );
-        snapshotStore.saveIfNewer(campaignId, updated);
-        persistedVersions.put(campaignId, updated.version());
+
+        snapshotPersistenceCoordinator.persistIfNeeded(
+                campaignId,
+                updated
+        );
+
         metrics.recordPacingStateCas("UPDATED");
         return true;
     }
@@ -175,27 +190,15 @@ public class RedisPacingStateAdapter
     @Override
     public void delete(String campaignId) {
         validateCampaignId(campaignId);
+
         snapshotStore.delete(campaignId);
-        redisTemplate.delete(keyFactory.pacingState(campaignId));
-        persistedVersions.remove(campaignId);
-    }
 
-    private void persistSnapshotIfNeeded(
-            String campaignId,
-            PacingStateSnapshot snapshot
-    ) {
-        Long persistedVersion = persistedVersions.get(campaignId);
+        redisTemplate.delete(
+                keyFactory.pacingState(campaignId)
+        );
 
-        if (persistedVersion != null
-                && persistedVersion >= snapshot.version()) {
-            return;
-        }
-
-        snapshotStore.saveIfNewer(campaignId, snapshot);
-        persistedVersions.merge(
-                campaignId,
-                snapshot.version(),
-                Math::max
+        snapshotPersistenceCoordinator.forget(
+                campaignId
         );
     }
 
@@ -332,7 +335,7 @@ public class RedisPacingStateAdapter
             );
         }
 
-        if (!"OK".equals(status) || result.size() != 4) {
+        if ((!"INITIALIZED".equals(status) && !"EXISTING".equals(status)) || result.size() != 4) {
             throw corrupted(
                     "알 수 없는 Redis 페이싱 상태 조회 결과입니다",
                     null

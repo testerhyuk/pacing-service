@@ -13,7 +13,7 @@ if redis.call('EXISTS', key) == 1 then
         return {'CORRUPTED'}
     end
 
-    return {'OK', values[1], values[2], values[3]}
+    return {'EXISTING', values[1], values[2], values[3]}
 end
 
 redis.call(
@@ -24,4 +24,4 @@ redis.call(
     'version', ARGV[3]
 )
 
-return {'OK', ARGV[1], ARGV[2], ARGV[3]}
+return {'INITIALIZED', ARGV[1], ARGV[2], ARGV[3]}

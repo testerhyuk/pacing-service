@@ -17,6 +17,13 @@ public class RedisScriptConfiguration {
     }
 
     @Bean
+    public RedisScript<List> readDecisionContextScript() {
+        return listScript(
+                "redis/read_decision_context.lua"
+        );
+    }
+
+    @Bean
     public RedisScript<Long> initializeBudgetStateScript() {
         return longScript("redis/initialize_budget_state.lua");
     }
@@ -83,13 +90,23 @@ public class RedisScriptConfiguration {
     }
 
     @Bean
-    public RedisScript<Long> rateLimitTokenBucketScript() {
-        return longScript("redis/rate_limit_token_bucket.lua");
+    public RedisScript<Long> releaseLockScript() {
+        return longScript("redis/release_lock.lua");
     }
 
     @Bean
-    public RedisScript<Long> releaseLockScript() {
-        return longScript("redis/release_lock.lua");
+    public RedisScript<String> admitRequestScript() {
+        return stringScript("redis/admit_request.lua");
+    }
+
+    private RedisScript<String> stringScript(String path) {
+        DefaultRedisScript<String> script =
+                new DefaultRedisScript<>();
+
+        script.setLocation(new ClassPathResource(path));
+        script.setResultType(String.class);
+
+        return script;
     }
 
     private RedisScript<List> listScript(String path) {
