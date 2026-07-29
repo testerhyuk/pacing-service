@@ -186,6 +186,7 @@ function ConvertTo-Hex {
 function Get-Sha256Hex {
     param(
         [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
         [byte[]]$Bytes
     )
 
@@ -213,6 +214,7 @@ function New-HmacHeaders {
         [string]$Secret,
 
         [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
         [string]$BodyText,
 
         [string]$Timestamp,
@@ -641,6 +643,77 @@ function Invoke-RedisScalar {
     return (($output | ForEach-Object {
         [string]$_
     }) -join "`n").Trim()
+}
+
+function Set-HaproxyServerRuntimeState {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$AdminPort,
+
+        [Parameter(Mandatory = $true)]
+        [string]$BackendName,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ServerName,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("ready", "drain")]
+        [string]$State
+    )
+
+    $client = [Net.Sockets.TcpClient]::new()
+    $stream = $null
+    $reader = $null
+
+    try {
+        $client.ReceiveTimeout = 5000
+        $client.SendTimeout = 5000
+        $client.Connect("127.0.0.1", $AdminPort)
+
+        $stream = $client.GetStream()
+        $stream.ReadTimeout = 5000
+        $stream.WriteTimeout = 5000
+
+        $command = (
+            "set server " +
+            $BackendName +
+            "/" +
+            $ServerName +
+            " state " +
+            $State +
+            "`n"
+        )
+        $payload = [Text.Encoding]::ASCII.GetBytes($command)
+
+        $stream.Write($payload, 0, $payload.Length)
+        $stream.Flush()
+        $client.Client.Shutdown(
+            [Net.Sockets.SocketShutdown]::Send
+        )
+
+        $reader = [IO.StreamReader]::new(
+            $stream,
+            [Text.Encoding]::ASCII
+        )
+        $response = $reader.ReadToEnd()
+
+        if (
+            -not [string]::IsNullOrWhiteSpace($response) -and
+            $response -match "(?i)(error|unknown|invalid)"
+        ) {
+            throw "HAProxy Runtime API error: $response"
+        }
+    }
+    finally {
+        if ($null -ne $reader) {
+            $reader.Dispose()
+        }
+        elseif ($null -ne $stream) {
+            $stream.Dispose()
+        }
+
+        $client.Dispose()
+    }
 }
 
 function ConvertTo-SqlLiteral {

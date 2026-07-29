@@ -2,6 +2,9 @@ import crypto from "k6/crypto";
 import http from "k6/http";
 import { check } from "k6";
 
+const errorRateThreshold =
+  __ENV.ERROR_RATE_THRESHOLD || "rate<0.01";
+
 export const options = {
   scenarios: {
     pacingDecision: {
@@ -15,7 +18,7 @@ export const options = {
     },
   },
   thresholds: {
-    http_req_failed: ["rate<0.01"],
+    http_req_failed: [errorRateThreshold],
     http_req_duration: ["p(95)<100", "p(99)<200"],
   },
 };

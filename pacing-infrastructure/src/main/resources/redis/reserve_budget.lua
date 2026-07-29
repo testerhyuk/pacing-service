@@ -82,8 +82,14 @@ local amount = normalize(ARGV[4])
 local reservedAt = ARGV[5]
 local expiresAt = ARGV[6]
 local persistenceMember = ARGV[7]
+local persistencePendingAt = ARGV[8]
 
 if not amount or amount == '0' then
+    return {'CONFLICT'}
+end
+
+if not persistencePendingAt
+        or not string.match(persistencePendingAt, '^%d+$') then
     return {'CONFLICT'}
 end
 
@@ -180,13 +186,16 @@ redis.call(
 )
 
 redis.call(
-    'SADD',
+    'ZADD',
     persistencePendingKey,
+    tonumber(persistencePendingAt),
     persistenceMember
 )
+
 redis.call(
-    'SADD',
+    'ZADD',
     campaignPersistencePendingKey,
+    tonumber(persistencePendingAt),
     persistenceMember
 )
 

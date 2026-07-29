@@ -65,11 +65,12 @@ pacing:
 
   worker:
     enabled: true
-    processed-event-ttl: 30d
+    processed-event-ttl: ${PACING_WORKER_PROCESSED_EVENT_TTL:1h}
+    terminal-reservation-ttl: ${PACING_WORKER_TERMINAL_RESERVATION_TTL:1h}
     kafka:
       billing-topic: billing.events.v1
       consumer-group: pacing-worker-billing-v1
-      concurrency: ${PACING_WORKER_KAFKA_CONCURRENCY:3}
+      concurrency: ${PACING_WORKER_KAFKA_CONCURRENCY:6}
       partitions: ${PACING_WORKER_KAFKA_PARTITIONS:12}
       replication-factor: ${PACING_WORKER_KAFKA_REPLICATION_FACTOR:1}
       retry-attempts: ${PACING_WORKER_RETRY_ATTEMPTS:6}
@@ -84,6 +85,7 @@ pacing:
     reservation-repair:
       enabled: ${PACING_WORKER_RESERVATION_REPAIR_ENABLED:true}
       fixed-delay: ${PACING_WORKER_RESERVATION_REPAIR_FIXED_DELAY:10s}
+      grace-period: ${PACING_WORKER_RESERVATION_REPAIR_GRACE_PERIOD:5s}
       batch-size: ${PACING_WORKER_RESERVATION_REPAIR_BATCH_SIZE:500}
 
     reconciliation:

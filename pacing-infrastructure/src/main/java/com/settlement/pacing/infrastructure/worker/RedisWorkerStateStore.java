@@ -77,7 +77,11 @@ public class RedisWorkerStateStore {
                 Long.toString(
                         entity.getExpiresAt().toEpochMilli()
                 ),
-                Long.toString(entity.getVersion())
+                Long.toString(entity.getVersion()),
+                Long.toString(
+                        properties.terminalReservationTtl()
+                                .toMillis()
+                )
         );
 
         return read(
@@ -248,13 +252,31 @@ public class RedisWorkerStateStore {
             RedisReservationSnapshot currentReservation,
             BillingResult result
     ) {
-        Money totalOverage = overage(
-                result.budgetState().totalEffectiveSpend(),
-                result.budgetState().totalBudget()
+        /*
+         * 공유 BudgetState의 절대값을 Redis에 덮어쓰지 않는다.
+         *
+         * 서로 다른 reservation의 Billing Event가 동시에 처리되더라도
+         * 각 이벤트가 변경해야 하는 금액(delta)만 계산한 뒤
+         * Lua 내부에서 현재 Redis 값에 원자적으로 반영한다.
+         */
+        long totalSpentDelta = delta(
+                currentBudget.totalSpentAmount(),
+                result.budgetState().totalSpentAmount()
         );
-        Money dailyOverage = overage(
-                result.budgetState().dailyEffectiveSpend(),
-                result.budgetState().dailyBudgetLimit()
+
+        long totalReservedDelta = delta(
+                currentBudget.totalReservedAmount(),
+                result.budgetState().totalReservedAmount()
+        );
+
+        long dailySpentDelta = delta(
+                currentBudget.dailySpentAmount(),
+                result.budgetState().dailySpentAmount()
+        );
+
+        long dailyReservedDelta = delta(
+                currentBudget.dailyReservedAmount(),
+                result.budgetState().dailyReservedAmount()
         );
 
         List<?> raw = redisTemplate.execute(
@@ -280,40 +302,82 @@ public class RedisWorkerStateStore {
                                 event.eventId()
                         )
                 ),
+
+                // 1
                 event.eventId(),
+
+                // 2
                 currentReservation.reservation().reservationId(),
+
+                // 3
                 currentBudget.campaignId(),
+
+                // 4
                 currentBudget.budgetDate().toString(),
+
+                // 5
                 amount(currentReservation.reservation().amount()),
-                amount(currentBudget.totalBudget()),
-                amount(currentBudget.totalSpentAmount()),
-                amount(currentBudget.totalReservedAmount()),
-                amount(currentBudget.dailyBudgetLimit()),
-                amount(currentBudget.dailySpentAmount()),
-                amount(currentBudget.dailyReservedAmount()),
+
+                // 6
                 amount(currentReservation.appliedAmount()),
+
+                // 7
                 currentReservation.reservation().status().name(),
+
+                // 8
                 epochMillis(
                         currentReservation.reservation().reservedAt()
                 ),
+
+                // 9
                 epochMillis(
                         currentReservation.reservation().expiresAt()
                 ),
+
+                // 10
                 Long.toString(currentReservation.version()),
-                amount(result.budgetState().totalSpentAmount()),
-                amount(result.budgetState().totalReservedAmount()),
-                amount(result.budgetState().dailySpentAmount()),
-                amount(result.budgetState().dailyReservedAmount()),
+
+                // 11
+                Long.toString(totalSpentDelta),
+
+                // 12
+                Long.toString(totalReservedDelta),
+
+                // 13
+                Long.toString(dailySpentDelta),
+
+                // 14
+                Long.toString(dailyReservedDelta),
+
+                // 15
                 result.reservation().status().name(),
+
+                // 16
                 amount(result.appliedAmount()),
-                amount(totalOverage),
-                amount(dailyOverage),
+
+                // 17
                 Long.toString(
                         properties.processedEventTtl().toMillis()
+                ),
+
+                // 18
+                Long.toString(
+                        properties.terminalReservationTtl()
+                                .toMillis()
                 )
         );
 
         return parseBillingTransition(raw);
+    }
+
+    private long delta(
+            Money before,
+            Money after
+    ) {
+        return Math.subtractExact(
+                after.amount(),
+                before.amount()
+        );
     }
 
     public RedisExpirationTransition expire(
@@ -361,7 +425,11 @@ public class RedisWorkerStateStore {
                 ),
                 Long.toString(currentReservation.version()),
                 amount(nextBudget.totalReservedAmount()),
-                amount(nextBudget.dailyReservedAmount())
+                amount(nextBudget.dailyReservedAmount()),
+                Long.toString(
+                        properties.terminalReservationTtl()
+                                .toMillis()
+                )
         );
 
         if (raw == null || raw.isEmpty()) {
@@ -417,11 +485,23 @@ public class RedisWorkerStateStore {
 
         String status = value(raw, 0);
 
-        if ("STATE_CONFLICT".equals(status)
-                || "STATE_MISSING".equals(status)) {
+        if ("STATE_CONFLICT".equals(status)) {
             throw new RetryableBillingEventException(
-                    "Redis 과금 상태가 처리 중 변경됐습니다: "
+                    "Redis 예약 상태가 처리 중 변경됐습니다: "
                             + status
+            );
+        }
+
+        if ("STATE_MISSING".equals(status)) {
+            throw new RetryableBillingEventException(
+                    "Redis 과금 상태를 찾을 수 없습니다: "
+                            + status
+            );
+        }
+
+        if ("INVALID_STATE".equals(status)) {
+            throw new NonRetryableBillingEventException(
+                    "Redis 예산 상태가 올바르지 않아 과금을 적용할 수 없습니다"
             );
         }
 

@@ -13,6 +13,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 
+import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
@@ -27,6 +28,7 @@ public class RedisBudgetReservationAdapter
     private final BudgetStateQueryGateway budgetStateQueryGateway;
     private final ReservationPersistenceService persistenceService;
     private final PacingInfrastructureMetrics metrics;
+    private final Clock clock;
 
     public RedisBudgetReservationAdapter(
             StringRedisTemplate redisTemplate,
@@ -35,7 +37,8 @@ public class RedisBudgetReservationAdapter
             RedisScript<Long> compensateReservationScript,
             BudgetStateQueryGateway budgetStateQueryGateway,
             ReservationPersistenceService persistenceService,
-            PacingInfrastructureMetrics metrics
+            PacingInfrastructureMetrics metrics,
+            Clock clock
     ) {
         this.redisTemplate = redisTemplate;
         this.keyFactory = keyFactory;
@@ -45,6 +48,7 @@ public class RedisBudgetReservationAdapter
         this.budgetStateQueryGateway = budgetStateQueryGateway;
         this.persistenceService = persistenceService;
         this.metrics = metrics;
+        this.clock = clock;
     }
 
     @Override
@@ -89,7 +93,6 @@ public class RedisBudgetReservationAdapter
         if (scriptResult.status()
                 == ReservationExecutionStatus.CREATED) {
             return persistNewRedisReservation(
-                    reservation,
                     scriptResult.reservation()
             );
         }
@@ -106,7 +109,6 @@ public class RedisBudgetReservationAdapter
     }
 
     private ReservationExecutionResult persistNewRedisReservation(
-            BudgetReservation requested,
             BudgetReservation storedInRedis
     ) {
         ReservationPersistenceService.InsertResult insertResult =
@@ -121,15 +123,18 @@ public class RedisBudgetReservationAdapter
         }
 
         BudgetReservation existing = insertResult.reservation();
-        compensate(requested);
-        clearPersistencePending(requested);
 
-        if (sameIdentity(existing, requested)) {
+        if (sameIdentity(existing, storedInRedis)) {
+            clearPersistencePending(storedInRedis);
+
             return result(
-                    ReservationExecutionStatus.ALREADY_EXISTS,
-                    existing
+                    ReservationExecutionStatus.CREATED,
+                    storedInRedis
             );
         }
+
+        compensate(storedInRedis);
+        clearPersistencePending(storedInRedis);
 
         return result(
                 ReservationExecutionStatus.CONFLICT,
@@ -199,7 +204,8 @@ public class RedisBudgetReservationAdapter
                 keyFactory.reservationPersistenceMember(
                         reservation.campaignId(),
                         reservation.reservationId()
-                )
+                ),
+                Long.toString(clock.instant().toEpochMilli())
         );
 
         if (rawResult == null || rawResult.isEmpty()) {
@@ -303,13 +309,13 @@ public class RedisBudgetReservationAdapter
                 reservation.reservationId()
         );
 
-        redisTemplate.opsForSet().remove(
+        redisTemplate.opsForZSet().remove(
                 keyFactory.campaignReservationPersistencePending(
                         reservation.campaignId()
                 ),
                 member
         );
-        redisTemplate.opsForSet().remove(
+        redisTemplate.opsForZSet().remove(
                 keyFactory.reservationPersistencePending(),
                 member
         );

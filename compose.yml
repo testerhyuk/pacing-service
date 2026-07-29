@@ -36,8 +36,10 @@ services:
       - -c
       - >-
         exec redis-server
+        --save ""
         --appendonly yes
         --appendfsync everysec
+        --no-appendfsync-on-rewrite yes
         --requirepass "$${REDIS_PASSWORD}"
     ports:
       - "127.0.0.1:${PACING_REDIS_PORT:-6379}:6379"
@@ -153,6 +155,7 @@ services:
       PACING_HMAC_AD_SERVER_CURRENT_SECRET: ${PACING_HMAC_AD_SERVER_CURRENT_SECRET}
       PACING_HMAC_AUCTION_SERVER_CURRENT_SECRET: ${PACING_HMAC_AUCTION_SERVER_CURRENT_SECRET}
       PACING_HMAC_OPERATION_SERVER_CURRENT_SECRET: ${PACING_HMAC_OPERATION_SERVER_CURRENT_SECRET}
+      PACING_RESERVATION_TTL: ${PACING_RESERVATION_TTL:-15m}
     ports:
       - "127.0.0.1:${PACING_API_PORT:-8080}:8080"
     depends_on:
@@ -179,6 +182,8 @@ services:
       PACING_REDIS_PORT: 6379
       PACING_REDIS_PASSWORD: ${PACING_REDIS_PASSWORD:-pacing}
       PACING_KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+      PACING_WORKER_PROCESSED_EVENT_TTL: ${PACING_WORKER_PROCESSED_EVENT_TTL:-1h}
+      PACING_WORKER_TERMINAL_RESERVATION_TTL: ${PACING_WORKER_TERMINAL_RESERVATION_TTL:-1h}
     ports:
       - "127.0.0.1:${PACING_WORKER_PORT:-8081}:8081"
     depends_on:

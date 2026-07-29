@@ -9,6 +9,7 @@ import com.settlement.pacing.core.budget.Money;
 import com.settlement.pacing.core.budget.ReservationStatus;
 import com.settlement.pacing.infrastructure.budget.BudgetReservationEntity;
 import com.settlement.pacing.infrastructure.budget.RedisBudgetStateStore;
+import com.settlement.pacing.infrastructure.common.RedisKeyFactory;
 import com.settlement.pacing.infrastructure.worker.BillingEventPersistenceService;
 import com.settlement.pacing.infrastructure.worker.RedisBillingTransition;
 import com.settlement.pacing.infrastructure.worker.RedisReservationSnapshot;
@@ -57,6 +58,7 @@ import static org.awaitility.Awaitility.await;
                 "pacing.infrastructure.redis.recovery-wait-timeout=2s",
                 "pacing.infrastructure.redis.recovery-retry-interval=20ms",
                 "pacing.worker.processed-event-ttl=1h",
+                "pacing.worker.terminal-reservation-ttl=1h",
                 "pacing.worker.kafka.billing-topic=billing.events.worker-it",
                 "pacing.worker.kafka.consumer-group=pacing-worker-it",
                 "pacing.worker.kafka.concurrency=1",
@@ -140,6 +142,9 @@ class WorkerIntegrationTest {
     private RedisWorkerStateStore workerStateStore;
 
     @Autowired
+    private RedisKeyFactory keyFactory;
+
+    @Autowired
     private BillingEventPersistenceService persistenceService;
 
     @Autowired
@@ -152,7 +157,8 @@ class WorkerIntegrationTest {
     private KafkaTemplate<Object, Object> kafkaTemplate;
 
     @Test
-    void 과금은_예약액을_소진액으로_원자적으로_전환하고_중복_반영하지_않는다() {
+    void 과금은_예약액을_소진액으로_원자적으로_전환하고_중복_반영하지_않는다()
+            throws Exception {
         String campaignId = "campaign-charge";
         String reservationId = "reservation-charge";
         Instant reservedAt =
@@ -194,6 +200,10 @@ class WorkerIntegrationTest {
                 "CONFIRMED",
                 900L,
                 1L
+        );
+        assertTerminalReservationHasTtl(
+                campaignId,
+                reservationId
         );
         assertBillingCompleted("event-charge");
     }
@@ -317,7 +327,8 @@ class WorkerIntegrationTest {
     }
 
     @Test
-    void 만료된_예약은_예약액을_해제하고_EXPIRED로_동기화한다() {
+    void 만료된_예약은_예약액을_해제하고_EXPIRED로_동기화한다()
+            throws Exception {
         String campaignId = "campaign-expiration";
         String reservationId = "reservation-expiration";
         Instant now = Instant.now();
@@ -341,6 +352,10 @@ class WorkerIntegrationTest {
                 "EXPIRED",
                 0L,
                 1L
+        );
+        assertTerminalReservationHasTtl(
+                campaignId,
+                reservationId
         );
     }
 
@@ -708,6 +723,26 @@ class WorkerIntegrationTest {
     private BudgetState budget(String campaignId) {
         return budgetStateStore.read(campaignId, BUDGET_DATE)
                 .budgetState();
+    }
+
+    private void assertTerminalReservationHasTtl(
+            String campaignId,
+            String reservationId
+    ) throws Exception {
+        String key = keyFactory.reservation(
+                campaignId,
+                reservationId
+        );
+        long ttlMillis = Long.parseLong(
+                REDIS.execInContainer(
+                        "redis-cli",
+                        "PTTL",
+                        key
+                ).getStdout().trim()
+        );
+
+        assertThat(ttlMillis)
+                .isBetween(1L, Duration.ofHours(1).toMillis());
     }
 
     private void assertReservation(

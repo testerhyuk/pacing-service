@@ -1,0 +1,101 @@
+services:
+  pacing-api-2:
+    image: pacing-service-pacing-api
+    pull_policy: never
+    container_name: pacing-api-2
+    profiles:
+      - multi-instance
+    environment:
+      PACING_POSTGRES_URL: jdbc:postgresql://postgres:5432/${PACING_POSTGRES_DATABASE:-pacing}
+      PACING_POSTGRES_USERNAME: ${PACING_POSTGRES_USERNAME:-pacing}
+      PACING_POSTGRES_PASSWORD: ${PACING_POSTGRES_PASSWORD:-pacing}
+      PACING_REDIS_HOST: redis
+      PACING_REDIS_PORT: 6379
+      PACING_REDIS_PASSWORD: ${PACING_REDIS_PASSWORD:-pacing}
+      PACING_HMAC_AD_SERVER_CURRENT_SECRET: ${PACING_HMAC_AD_SERVER_CURRENT_SECRET}
+      PACING_HMAC_AUCTION_SERVER_CURRENT_SECRET: ${PACING_HMAC_AUCTION_SERVER_CURRENT_SECRET}
+      PACING_HMAC_OPERATION_SERVER_CURRENT_SECRET: ${PACING_HMAC_OPERATION_SERVER_CURRENT_SECRET}
+      PACING_RESERVATION_TTL: ${PACING_RESERVATION_TTL:-15m}
+    ports:
+      - "127.0.0.1:${PACING_MULTI_API_SECONDARY_PORT:-18082}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - pacing-network
+
+  pacing-api-3:
+    image: pacing-service-pacing-api
+    pull_policy: never
+    container_name: pacing-api-3
+    profiles:
+      - multi-instance
+    environment:
+      PACING_POSTGRES_URL: jdbc:postgresql://postgres:5432/${PACING_POSTGRES_DATABASE:-pacing}
+      PACING_POSTGRES_USERNAME: ${PACING_POSTGRES_USERNAME:-pacing}
+      PACING_POSTGRES_PASSWORD: ${PACING_POSTGRES_PASSWORD:-pacing}
+      PACING_REDIS_HOST: redis
+      PACING_REDIS_PORT: 6379
+      PACING_REDIS_PASSWORD: ${PACING_REDIS_PASSWORD:-pacing}
+      PACING_HMAC_AD_SERVER_CURRENT_SECRET: ${PACING_HMAC_AD_SERVER_CURRENT_SECRET}
+      PACING_HMAC_AUCTION_SERVER_CURRENT_SECRET: ${PACING_HMAC_AUCTION_SERVER_CURRENT_SECRET}
+      PACING_HMAC_OPERATION_SERVER_CURRENT_SECRET: ${PACING_HMAC_OPERATION_SERVER_CURRENT_SECRET}
+      PACING_RESERVATION_TTL: ${PACING_RESERVATION_TTL:-15m}
+    ports:
+      - "127.0.0.1:${PACING_MULTI_API_TERTIARY_PORT:-18084}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - pacing-network
+
+  pacing-worker-2:
+    image: pacing-service-pacing-worker
+    pull_policy: never
+    container_name: pacing-worker-2
+    profiles:
+      - multi-instance
+    environment:
+      PACING_POSTGRES_URL: jdbc:postgresql://postgres:5432/${PACING_POSTGRES_DATABASE:-pacing}
+      PACING_POSTGRES_USERNAME: ${PACING_POSTGRES_USERNAME:-pacing}
+      PACING_POSTGRES_PASSWORD: ${PACING_POSTGRES_PASSWORD:-pacing}
+      PACING_REDIS_HOST: redis
+      PACING_REDIS_PORT: 6379
+      PACING_REDIS_PASSWORD: ${PACING_REDIS_PASSWORD:-pacing}
+      PACING_KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+    ports:
+      - "127.0.0.1:${PACING_MULTI_WORKER_SECONDARY_PORT:-18083}:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - pacing-network
+
+  pacing-api-lb:
+    image: haproxy:3.2-alpine
+    container_name: pacing-api-lb
+    profiles:
+      - multi-instance
+    ports:
+      - "127.0.0.1:${PACING_MULTI_API_LB_PORT:-18080}:80"
+      - "127.0.0.1:${PACING_MULTI_API_LB_ADMIN_PORT:-19999}:9999"
+    volumes:
+      - ./docker/haproxy/multi-instance.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      - pacing-api
+      - pacing-api-2
+      - pacing-api-3
+    restart: unless-stopped
+    networks:
+      - pacing-network

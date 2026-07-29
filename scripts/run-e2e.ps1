@@ -388,7 +388,7 @@ try {
         -Actual $finalState.dailyReservedAmount `
         -Message "일일 예약액이 0이 아닙니다."
     Assert-Equal `
-        -Expected "CANCELLED|0" `
+        -Expected "CANCELLED|$reservationAmount|0" `
         -Actual $finalState.postgresReservation `
         -Message "PostgreSQL 예약 최종 상태가 다릅니다."
 
