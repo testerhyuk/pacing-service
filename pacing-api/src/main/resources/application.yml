@@ -8,7 +8,7 @@ pacing:
     smoothing-factor: 0.5
     max-rate-change: 0.2
     exploration-step: 0.1
-  reservation-ttl: 5m
+  reservation-ttl: ${PACING_RESERVATION_TTL:15m}
   state-update-max-retries: 3
 
   initial-rate:
@@ -80,6 +80,9 @@ pacing:
           refill-tokens-per-second: ${PACING_RATE_LIMIT_OPERATION_SERVER_REFILL:100}
 
 spring:
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+
   datasource:
     url: ${PACING_POSTGRES_URL:jdbc:postgresql://localhost:5432/pacing}
     username: ${PACING_API_POSTGRES_USERNAME:${PACING_POSTGRES_USERNAME:pacing}}
@@ -106,6 +109,9 @@ spring:
       password: ${PACING_REDIS_PASSWORD:pacing}
       connect-timeout: 500ms
       timeout: 500ms
+
+server:
+  shutdown: graceful
 
 management:
   endpoints:

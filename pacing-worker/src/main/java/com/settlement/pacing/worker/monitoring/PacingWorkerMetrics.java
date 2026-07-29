@@ -107,6 +107,7 @@ public class PacingWorkerMetrics {
             ReservationRepairResult result
     ) {
         recordRepairResult("REPAIRED", result.repaired());
+        recordRepairResult("ALREADY_PERSISTED", result.alreadyPersisted());
         recordRepairResult("REMOVED", result.removed());
         recordRepairResult("FAILED", result.failed());
     }

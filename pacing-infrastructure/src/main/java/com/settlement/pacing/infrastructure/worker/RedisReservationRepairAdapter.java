@@ -18,6 +18,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public class RedisReservationRepairAdapter
         implements ReservationRepairGateway {
@@ -45,52 +46,72 @@ public class RedisReservationRepairAdapter
     }
 
     @Override
-    public ReservationRepairResult repair(int batchSize) {
+    public ReservationRepairResult repair(
+            int batchSize,
+            Instant eligibleBefore
+    ) {
         if (batchSize <= 0) {
             throw new IllegalArgumentException(
-                    "예약 복구 batchSize는 0보다 커야 합니다"
+                    "예약 영속화 복구 batchSize는 0보다 커야 합니다"
             );
         }
 
+        if (eligibleBefore == null) {
+            throw new IllegalArgumentException(
+                    "예약 영속화 복구 기준 시각은 null일 수 없습니다"
+            );
+        }
+
+        Set<String> candidates = redisTemplate.opsForZSet()
+                .rangeByScore(
+                        keyFactory.reservationPersistencePending(),
+                        Double.NEGATIVE_INFINITY,
+                        eligibleBefore.toEpochMilli(),
+                        0,
+                        batchSize
+                );
+
         int scanned = 0;
         int repaired = 0;
+        int alreadyPersisted = 0;
         int removed = 0;
         int failed = 0;
 
-        ScanOptions options = ScanOptions.scanOptions()
-                .count(batchSize)
-                .build();
+        if (candidates == null || candidates.isEmpty()) {
+            return new ReservationRepairResult(
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+            );
+        }
 
-        try (Cursor<String> cursor = redisTemplate.opsForSet()
-                .scan(
-                        keyFactory.reservationPersistencePending(),
-                        options
-                )) {
-            while (cursor.hasNext() && scanned < batchSize) {
-                String member = cursor.next();
-                scanned++;
+        for (String member : candidates) {
+            scanned++;
 
-                try {
-                    RepairOutcome outcome = repairOne(member);
-                    if (outcome == RepairOutcome.REPAIRED) {
-                        repaired++;
-                    } else {
-                        removed++;
-                    }
-                } catch (RuntimeException exception) {
-                    failed++;
-                    log.error(
-                            "Redis 예약 영속화 복구에 실패했습니다: {}",
-                            member,
-                            exception
-                    );
+            try {
+                RepairOutcome outcome = repairOne(member);
+
+                switch (outcome) {
+                    case REPAIRED -> repaired++;
+                    case ALREADY_PERSISTED -> alreadyPersisted++;
+                    case REMOVED -> removed++;
                 }
+            } catch (RuntimeException exception) {
+                failed++;
+                log.error(
+                        "예약 영속화 복구에 실패했습니다: member={}",
+                        member,
+                        exception
+                );
             }
         }
 
         return new ReservationRepairResult(
                 scanned,
                 repaired,
+                alreadyPersisted,
                 removed,
                 failed
         );
@@ -125,7 +146,12 @@ public class RedisReservationRepairAdapter
         }
 
         clearPending(pending, member);
-        return RepairOutcome.REPAIRED;
+
+        if (insertResult.inserted()) {
+            return RepairOutcome.REPAIRED;
+        }
+
+        return RepairOutcome.ALREADY_PERSISTED;
     }
 
     private BudgetReservation toReservation(
@@ -194,13 +220,13 @@ public class RedisReservationRepairAdapter
             RedisKeyFactory.PendingReservationKey pending,
             String member
     ) {
-        redisTemplate.opsForSet().remove(
+        redisTemplate.opsForZSet().remove(
                 keyFactory.campaignReservationPersistencePending(
                         pending.campaignId()
                 ),
                 member
         );
-        redisTemplate.opsForSet().remove(
+        redisTemplate.opsForZSet().remove(
                 keyFactory.reservationPersistencePending(),
                 member
         );
@@ -229,6 +255,7 @@ public class RedisReservationRepairAdapter
 
     private enum RepairOutcome {
         REPAIRED,
+        ALREADY_PERSISTED,
         REMOVED
     }
 }

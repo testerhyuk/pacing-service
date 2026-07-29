@@ -303,7 +303,8 @@ public class PacingInfrastructureAutoConfiguration {
             RedisScript<Long> compensateReservationScript,
             BudgetStateQueryGateway budgetStateQueryGateway,
             ReservationPersistenceService persistenceService,
-            PacingInfrastructureMetrics metrics
+            PacingInfrastructureMetrics metrics,
+            Clock clock
     ) {
         return new RedisBudgetReservationAdapter(
                 redisTemplate,
@@ -312,7 +313,8 @@ public class PacingInfrastructureAutoConfiguration {
                 compensateReservationScript,
                 budgetStateQueryGateway,
                 persistenceService,
-                metrics
+                metrics,
+                clock
         );
     }
 

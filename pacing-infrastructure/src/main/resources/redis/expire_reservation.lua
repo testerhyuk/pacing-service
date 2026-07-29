@@ -113,6 +113,7 @@ local nextVersion = tostring(
     redis.call('HINCRBY', reservationKey, 'version', 1)
 )
 redis.call('ZREM', expiryKey, ARGV[2])
+redis.call('PEXPIRE', reservationKey, ARGV[18])
 
 return {
     'EXPIRED',

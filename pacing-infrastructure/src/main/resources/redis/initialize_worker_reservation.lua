@@ -25,9 +25,21 @@ if redis.call('EXISTS', reservationKey) == 0 then
         )
     else
         redis.call('ZREM', expiryKey, ARGV[1])
+        redis.call('PEXPIRE', reservationKey, ARGV[10])
     end
 
     return {'CREATED'}
+end
+
+local currentStatus = redis.call(
+    'HGET',
+    reservationKey,
+    'status'
+)
+
+if currentStatus and currentStatus ~= 'RESERVED'
+        and redis.call('PTTL', reservationKey) < 0 then
+    redis.call('PEXPIRE', reservationKey, ARGV[10])
 end
 
 return {'EXISTS'}

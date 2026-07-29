@@ -18,10 +18,15 @@ public record PacingWorkerProperties(
         @NotNull @Valid Expiration expiration,
         @NotNull @Valid ReservationRepair reservationRepair,
         @NotNull @Valid Reconciliation reconciliation,
-        @NotNull Duration processedEventTtl
+        @NotNull Duration processedEventTtl,
+        @NotNull Duration terminalReservationTtl
 ) {
     public PacingWorkerProperties {
         validatePositive(processedEventTtl, "처리 이벤트 TTL");
+        validatePositive(
+                terminalReservationTtl,
+                "종료 예약 TTL"
+        );
     }
 
     public record Kafka(
@@ -62,12 +67,18 @@ public record PacingWorkerProperties(
 
     public record ReservationRepair(
             @NotNull Duration fixedDelay,
+            @NotNull Duration gracePeriod,
             @Min(1) int batchSize
     ) {
         public ReservationRepair {
             validatePositive(
                     fixedDelay,
                     "예약 영속화 복구 실행 주기"
+            );
+
+            validatePositive(
+                    gracePeriod,
+                    "예약 영속화 복구 유예 시간"
             );
         }
     }

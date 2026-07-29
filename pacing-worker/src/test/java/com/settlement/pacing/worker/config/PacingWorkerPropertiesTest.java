@@ -10,6 +10,22 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class PacingWorkerPropertiesTest {
 
     @Test
+    void 종료_예약_TTL은_0보다_커야_한다() {
+        assertThatThrownBy(() ->
+                new PacingWorkerProperties(
+                        kafka(),
+                        expiration(),
+                        reservationRepair(),
+                        reconciliation(),
+                        Duration.ofDays(30),
+                        Duration.ZERO
+                )
+        )
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("종료 예약 TTL는 0보다 커야 합니다");
+    }
+
+    @Test
     void 처리_이벤트_TTL은_0보다_커야_한다() {
         assertThatThrownBy(() ->
                 new PacingWorkerProperties(
@@ -17,7 +33,8 @@ class PacingWorkerPropertiesTest {
                         expiration(),
                         reservationRepair(),
                         reconciliation(),
-                        Duration.ZERO
+                        Duration.ZERO,
+                        Duration.ofDays(30)
                 )
         )
                 .isInstanceOf(IllegalArgumentException.class)
@@ -84,6 +101,7 @@ class PacingWorkerPropertiesTest {
     reservationRepair() {
         return new PacingWorkerProperties.ReservationRepair(
                 Duration.ofSeconds(10),
+                Duration.ofSeconds(5),
                 100
         );
     }

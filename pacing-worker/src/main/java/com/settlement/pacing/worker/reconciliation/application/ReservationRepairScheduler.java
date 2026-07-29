@@ -8,6 +8,9 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.time.Clock;
+import java.time.Instant;
+
 @Component
 @ConditionalOnProperty(
         prefix = "pacing.worker.reservation-repair",
@@ -24,15 +27,18 @@ public class ReservationRepairScheduler {
     private final ReservationRepairGateway gateway;
     private final PacingWorkerProperties properties;
     private final PacingWorkerMetrics metrics;
+    private final Clock clock;
 
     public ReservationRepairScheduler(
             ReservationRepairGateway gateway,
             PacingWorkerProperties properties,
-            PacingWorkerMetrics metrics
+            PacingWorkerMetrics metrics,
+            Clock clock
     ) {
         this.gateway = gateway;
         this.properties = properties;
         this.metrics = metrics;
+        this.clock = clock;
     }
 
     @Scheduled(
@@ -41,9 +47,17 @@ public class ReservationRepairScheduler {
     )
     public void repairReservations() {
         try {
+            Instant eligibleBefore = clock.instant()
+                    .minus(
+                            properties.reservationRepair()
+                                    .gracePeriod()
+                    );
+
             ReservationRepairResult result = gateway.repair(
-                    properties.reservationRepair().batchSize()
+                    properties.reservationRepair().batchSize(),
+                    eligibleBefore
             );
+
             metrics.recordReservationRepair(result);
         } catch (RuntimeException exception) {
             metrics.recordReservationRepairFailure(exception);
