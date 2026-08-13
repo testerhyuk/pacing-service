@@ -174,7 +174,8 @@ redis.call(
     'status', 'RESERVED',
     'reservedAtEpochMillis', reservedAt,
     'expiresAtEpochMillis', expiresAt,
-    'version', '0'
+    'version', '0',
+    'lastBillingSequence', '0'
 )
 
 redis.call(

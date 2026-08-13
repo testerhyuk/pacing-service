@@ -10,6 +10,7 @@ public record RedisBillingTransition(
         ReservationStatus reservationStatus,
         Money appliedAmount,
         long reservationVersion,
+        long lastBillingSequence,
         Money totalOverageAmount,
         Money dailyOverageAmount
 ) {
@@ -22,6 +23,7 @@ public record RedisBillingTransition(
                 || reservationStatus == null
                 || appliedAmount == null
                 || reservationVersion < 0
+                || lastBillingSequence <= 0
                 || totalOverageAmount == null
                 || dailyOverageAmount == null) {
             throw new IllegalArgumentException(
@@ -32,6 +34,7 @@ public record RedisBillingTransition(
 
     public enum RedisTransitionStatus {
         APPLIED,
-        ALREADY_APPLIED
+        ALREADY_APPLIED,
+        STALE
     }
 }

@@ -25,6 +25,7 @@ public interface BudgetReservationJpaRepository
                 reserved_at,
                 expires_at,
                 version,
+                last_billing_sequence,
                 created_at,
                 updated_at
             )
@@ -37,6 +38,7 @@ public interface BudgetReservationJpaRepository
                 'RESERVED',
                 :reservedAt,
                 :expiresAt,
+                0,
                 0,
                 :persistedAt,
                 :persistedAt
@@ -64,6 +66,7 @@ public interface BudgetReservationJpaRepository
             SET status = :status,
                 applied_amount = :appliedAmount,
                 version = :version,
+                last_billing_sequence = :lastBillingSequence,
                 expiration_claim_token = NULL,
                 expiration_claimed_until = NULL,
                 updated_at = :updatedAt
@@ -75,6 +78,7 @@ public interface BudgetReservationJpaRepository
             @Param("status") String status,
             @Param("appliedAmount") long appliedAmount,
             @Param("version") long version,
+            @Param("lastBillingSequence") long lastBillingSequence,
             @Param("updatedAt") Instant updatedAt
     );
 }

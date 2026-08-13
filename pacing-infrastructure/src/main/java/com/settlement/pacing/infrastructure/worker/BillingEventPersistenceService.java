@@ -43,17 +43,34 @@ public class BillingEventPersistenceService {
                 event.eventId(),
                 event.reservationId(),
                 event.eventType().name(),
-                event.actualAmount().amount(),
+                event.targetAppliedAmount().amount(),
+                event.sequence(),
                 normalizedOccurredAt(event),
                 now
         );
 
         BillingEventEntity stored = eventRepository.findById(
                 event.eventId()
-        ).orElseThrow(() -> new RetryableBillingEventException(
-                "등록한 과금 이벤트를 PostgreSQL에서 조회할 수 없습니다: "
-                        + event.eventId()
-        ));
+        ).orElseGet(() -> {
+            Optional<BillingEventEntity> sequenceOwner =
+                    eventRepository.findByReservationIdAndEventSequence(
+                            event.reservationId(),
+                            event.sequence()
+                    );
+
+            if (sequenceOwner.isPresent()) {
+                throw new NonRetryableBillingEventException(
+                        "동일 예약 순번에 서로 다른 과금 이벤트가 존재합니다: "
+                                + event.reservationId()
+                                + "/" + event.sequence()
+                );
+            }
+
+            throw new RetryableBillingEventException(
+                    "등록한 과금 이벤트를 PostgreSQL에서 조회할 수 없습니다: "
+                            + event.eventId()
+            );
+        });
 
         validateSamePayload(stored, event);
 
@@ -69,66 +86,6 @@ public class BillingEventPersistenceService {
             String reservationId
     ) {
         return reservationRepository.findById(reservationId);
-    }
-
-    @Transactional
-    public Optional<BillingEventProcessingResult> completeIfStale(
-            BillingEvent event,
-            BudgetReservationEntity reservation
-    ) {
-        Optional<BillingEventEntity> latest =
-                eventRepository
-                        .findFirstByReservationIdAndProcessingStatusOrderByOccurredAtDesc(
-                                event.reservationId(),
-                                BillingEventProcessingState.COMPLETED
-                        );
-
-        if (latest.isEmpty()) {
-            return Optional.empty();
-        }
-
-        Instant incomingOccurredAt = normalizedOccurredAt(event);
-        int order = incomingOccurredAt.compareTo(
-                latest.get().getOccurredAt()
-        );
-
-        if (order > 0) {
-            return Optional.empty();
-        }
-
-        if (order == 0) {
-            throw new NonRetryableBillingEventException(
-                    "동일 예약에 같은 occurredAt을 가진 서로 다른 이벤트가 있습니다: "
-                            + event.reservationId()
-            );
-        }
-
-        int updated = eventRepository.markCompleted(
-                event.eventId(),
-                reservation.getStatus().name(),
-                reservation.getAppliedAmount(),
-                reservation.getVersion(),
-                0L,
-                0L,
-                clock.instant()
-        );
-
-        if (updated != 1) {
-            throw new RetryableBillingEventException(
-                    "지연 과금 이벤트 처리 결과를 저장할 수 없습니다: "
-                            + event.eventId()
-            );
-        }
-
-        return Optional.of(new BillingEventProcessingResult(
-                BillingEventProcessingStatus.STALE,
-                event.eventId(),
-                event.reservationId(),
-                reservation.getStatus(),
-                new Money(reservation.getAppliedAmount()),
-                Money.zero(),
-                Money.zero()
-        ));
     }
 
     @Transactional
@@ -164,7 +121,8 @@ public class BillingEventPersistenceService {
                 transition.reservationId(),
                 transition.reservationStatus(),
                 transition.appliedAmount(),
-                transition.reservationVersion()
+                transition.reservationVersion(),
+                transition.lastBillingSequence()
         );
     }
 
@@ -173,13 +131,15 @@ public class BillingEventPersistenceService {
             String reservationId,
             ReservationStatus status,
             Money appliedAmount,
-            long version
+            long version,
+            long lastBillingSequence
     ) {
         int updated = reservationRepository.updateFromRedis(
                 reservationId,
                 status.name(),
                 appliedAmount.amount(),
                 version,
+                lastBillingSequence,
                 clock.instant()
         );
 
@@ -208,7 +168,9 @@ public class BillingEventPersistenceService {
                 && (current.getStatus()
                 != status
                 || current.getAppliedAmount()
-                != appliedAmount.amount())) {
+                != appliedAmount.amount()
+                || current.getLastBillingSequence()
+                != lastBillingSequence)) {
             throw new RetryableBillingEventException(
                     "동일 version의 Redis와 PostgreSQL 예약 상태가 다릅니다: "
                             + reservationId
@@ -235,8 +197,9 @@ public class BillingEventPersistenceService {
         boolean same = stored.getReservationId()
                 .equals(event.reservationId())
                 && stored.getEventType() == event.eventType()
-                && stored.getActualAmount()
-                == event.actualAmount().amount()
+                && stored.getTargetAppliedAmount()
+                == event.targetAppliedAmount().amount()
+                && stored.getEventSequence() == event.sequence()
                 && stored.getOccurredAt()
                 .equals(normalizedOccurredAt(event));
 

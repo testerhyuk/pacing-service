@@ -429,6 +429,7 @@ class WorkerIntegrationTest {
                         reservationId,
                         BillingEventType.CHARGED,
                         650L,
+                        1L,
                         Instant.now()
                 )
         ).join();
@@ -476,6 +477,7 @@ class WorkerIntegrationTest {
                         reservationId,
                         BillingEventType.ADJUSTED,
                         new Money(1_100L),
+                        2L,
                         reservedAt.plusSeconds(20)
                 ));
         BillingEventProcessingResult cancelled =
@@ -483,7 +485,8 @@ class WorkerIntegrationTest {
                         "event-cancel",
                         reservationId,
                         BillingEventType.CANCELLED,
-                        new Money(1_100L),
+                        Money.zero(),
+                        3L,
                         reservedAt.plusSeconds(30)
                 ));
 
@@ -501,6 +504,79 @@ class WorkerIntegrationTest {
                 0L,
                 3L
         );
+    }
+
+    @Test
+    void 부분_취소와_전체_취소_후_재보정을_순번대로_반영한다() {
+        String campaignId = "campaign-partial-cancel";
+        String reservationId = "reservation-partial-cancel";
+        Instant reservedAt =
+                Instant.parse("2026-07-26T04:30:00Z");
+        Instant occurredAt = reservedAt.plusSeconds(10);
+        seedReserved(
+                campaignId,
+                reservationId,
+                1_000L,
+                10_000L,
+                reservedAt,
+                reservedAt.plusSeconds(300)
+        );
+
+        billingGateway.process(new BillingEvent(
+                "event-partial-charge",
+                reservationId,
+                BillingEventType.CHARGED,
+                new Money(900L),
+                1L,
+                occurredAt
+        ));
+        billingGateway.process(new BillingEvent(
+                "event-partial-cancel",
+                reservationId,
+                BillingEventType.CANCELLED,
+                new Money(600L),
+                2L,
+                occurredAt
+        ));
+        billingGateway.process(new BillingEvent(
+                "event-partial-adjust",
+                reservationId,
+                BillingEventType.ADJUSTED,
+                new Money(700L),
+                3L,
+                occurredAt
+        ));
+        billingGateway.process(new BillingEvent(
+                "event-full-cancel",
+                reservationId,
+                BillingEventType.CANCELLED,
+                Money.zero(),
+                4L,
+                occurredAt
+        ));
+        BillingEventProcessingResult reopened =
+                billingGateway.process(new BillingEvent(
+                        "event-reopen-adjust",
+                        reservationId,
+                        BillingEventType.ADJUSTED,
+                        new Money(100L),
+                        5L,
+                        occurredAt
+                ));
+
+        assertThat(reopened.reservationStatus())
+                .isEqualTo(ReservationStatus.CONFIRMED);
+        assertThat(reopened.appliedAmount())
+                .isEqualTo(new Money(100L));
+        assertThat(budget(campaignId).totalSpentAmount())
+                .isEqualTo(new Money(100L));
+        assertReservation(
+                reservationId,
+                "CONFIRMED",
+                100L,
+                5L
+        );
+        assertLastBillingSequence(reservationId, 5L);
     }
 
     @Test
@@ -569,6 +645,7 @@ class WorkerIntegrationTest {
                         reservationId,
                         BillingEventType.ADJUSTED,
                         800L,
+                        2L,
                         adjustedOccurredAt
                 )
         ).join();
@@ -580,6 +657,7 @@ class WorkerIntegrationTest {
                         reservationId,
                         BillingEventType.CHARGED,
                         650L,
+                        1L,
                         chargedOccurredAt
                 )
         ).join();
@@ -614,6 +692,7 @@ class WorkerIntegrationTest {
                         reservationId,
                         BillingEventType.CHARGED,
                         100L,
+                        1L,
                         Instant.now()
                 )
         ).join();
@@ -1163,6 +1242,7 @@ class WorkerIntegrationTest {
                 reservationId,
                 BillingEventType.CHARGED,
                 new Money(amount),
+                1L,
                 occurredAt
         );
     }
@@ -1235,6 +1315,22 @@ class WorkerIntegrationTest {
                 .optional();
 
         assertThat(status).contains("COMPLETED");
+    }
+
+    private void assertLastBillingSequence(
+            String reservationId,
+            long expectedSequence
+    ) {
+        long actual = jdbcClient.sql("""
+                        SELECT last_billing_sequence
+                        FROM budget_reservation
+                        WHERE reservation_id = :reservationId
+                        """)
+                .param("reservationId", reservationId)
+                .query(Long.class)
+                .single();
+
+        assertThat(actual).isEqualTo(expectedSequence);
     }
 
     private record ReservationValues(

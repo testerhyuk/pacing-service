@@ -92,7 +92,7 @@ class BillingEventProcessorTest {
         BudgetReservation reservation =
                 reservation(ReservationStatus.RESERVED);
         BillingEvent event =
-                event(BillingEventType.CANCELLED, new Money(1_000));
+                event(BillingEventType.CANCELLED, Money.zero());
 
         BillingResult result = processor.process(
                 budgetState,
@@ -119,7 +119,7 @@ class BillingEventProcessorTest {
         BudgetReservation reservation =
                 reservation(ReservationStatus.CONFIRMED);
         BillingEvent event =
-                event(BillingEventType.CANCELLED, new Money(900));
+                event(BillingEventType.CANCELLED, Money.zero());
 
         BillingResult result = processor.process(
                 budgetState,
@@ -183,21 +183,44 @@ class BillingEventProcessorTest {
                 )
         )
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("확정된 예약만 과금액을 보정할 수 있습니다");
+                .hasMessage("확정 또는 취소된 예약만 과금액을 보정할 수 있습니다");
     }
 
     @Test
-    void 취소_금액이_현재_적용된_과금액과_다르면_취소할_수_없다() {
-        assertThatThrownBy(() ->
-                processor.process(
-                        confirmedBudgetState(),
-                        reservation(ReservationStatus.CONFIRMED),
-                        event(BillingEventType.CANCELLED, new Money(800)),
-                        new Money(900)
-                )
-        )
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("취소 금액은 현재 적용된 과금액과 일치해야 합니다");
+    void 일부_취소_후_남은_금액과_CONFIRMED_상태를_유지한다() {
+        BillingResult result = processor.process(
+                confirmedBudgetState(),
+                reservation(ReservationStatus.CONFIRMED),
+                event(BillingEventType.CANCELLED, new Money(600)),
+                new Money(900)
+        );
+
+        assertThat(result.budgetState().totalSpentAmount())
+                .isEqualTo(new Money(20_600));
+        assertThat(result.reservation().status())
+                .isEqualTo(ReservationStatus.CONFIRMED);
+        assertThat(result.appliedAmount()).isEqualTo(new Money(600));
+    }
+
+    @Test
+    void 전체_취소_후_보정으로_과금액을_다시_반영한다() {
+        BillingResult result = processor.process(
+                budgetState(
+                        new Money(20_000),
+                        Money.zero(),
+                        new Money(5_000),
+                        Money.zero()
+                ),
+                reservation(ReservationStatus.CANCELLED),
+                event(BillingEventType.ADJUSTED, new Money(100)),
+                Money.zero()
+        );
+
+        assertThat(result.budgetState().totalSpentAmount())
+                .isEqualTo(new Money(20_100));
+        assertThat(result.reservation().status())
+                .isEqualTo(ReservationStatus.CONFIRMED);
+        assertThat(result.appliedAmount()).isEqualTo(new Money(100));
     }
 
     @Test
@@ -207,6 +230,7 @@ class BillingEventProcessorTest {
                 "reservation-2",
                 BillingEventType.CHARGED,
                 new Money(900),
+                1L,
                 occurredAt
         );
 
@@ -229,6 +253,7 @@ class BillingEventProcessorTest {
                 "reservation-1",
                 BillingEventType.CHARGED,
                 new Money(900),
+                1L,
                 reservedAt.minusSeconds(1)
         );
 
@@ -296,13 +321,14 @@ class BillingEventProcessorTest {
 
     private BillingEvent event(
             BillingEventType eventType,
-            Money actualAmount
+            Money targetAppliedAmount
     ) {
         return new BillingEvent(
                 "event-1",
                 "reservation-1",
                 eventType,
-                actualAmount,
+                targetAppliedAmount,
+                1L,
                 occurredAt
         );
     }

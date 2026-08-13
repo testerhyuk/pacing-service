@@ -59,6 +59,7 @@ class BillingEventListenerTest {
                 "reservation-1",
                 BillingEventType.CHARGED,
                 0L,
+                1L,
                 Instant.parse("2026-07-26T01:00:00Z")
         );
 
@@ -105,6 +106,7 @@ class BillingEventListenerTest {
                 "reservation-1",
                 BillingEventType.CHARGED,
                 900L,
+                1L,
                 Instant.parse("2026-07-26T01:00:00Z")
         );
     }
@@ -118,8 +120,9 @@ class BillingEventListenerTest {
                         message.reservationId()
                 )
                 && event.eventType() == message.eventType()
-                && event.actualAmount().amount()
-                == message.actualAmount()
+                && event.targetAppliedAmount().amount()
+                == message.targetAppliedAmount()
+                && event.sequence() == message.sequence()
                 && event.occurredAt().equals(
                         message.occurredAt()
                 );

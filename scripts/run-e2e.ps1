@@ -294,7 +294,8 @@ try {
         -ReservationId $reservationId `
         -EventId $chargeEventId `
         -EventType "CHARGED" `
-        -ActualAmount $reservationAmount `
+        -TargetAppliedAmount $reservationAmount `
+        -Sequence 1 `
         -OccurredAt $chargeOccurredAt `
         -PassThru `
         -EnvironmentFile $EnvironmentFile)
@@ -309,7 +310,8 @@ try {
         -ReservationId $reservationId `
         -EventId $chargeEventId `
         -EventType "CHARGED" `
-        -ActualAmount $reservationAmount `
+        -TargetAppliedAmount $reservationAmount `
+        -Sequence 1 `
         -OccurredAt $chargeOccurredAt `
         -PassThru `
         -EnvironmentFile $EnvironmentFile)
@@ -335,7 +337,8 @@ try {
         -ReservationId $reservationId `
         -EventId $adjustEventId `
         -EventType "ADJUSTED" `
-        -ActualAmount $adjustedAmount `
+        -TargetAppliedAmount $adjustedAmount `
+        -Sequence 2 `
         -OccurredAt ([DateTimeOffset]::UtcNow) `
         -PassThru `
         -EnvironmentFile $EnvironmentFile)
@@ -352,7 +355,8 @@ try {
         -ReservationId $reservationId `
         -EventId $cancelEventId `
         -EventType "CANCELLED" `
-        -ActualAmount $adjustedAmount `
+        -TargetAppliedAmount 0 `
+        -Sequence 3 `
         -OccurredAt ([DateTimeOffset]::UtcNow) `
         -PassThru `
         -EnvironmentFile $EnvironmentFile)

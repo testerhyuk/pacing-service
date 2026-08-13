@@ -6,7 +6,9 @@ param(
     [ValidateSet("CHARGED", "CANCELLED", "ADJUSTED")]
     [string]$EventType = "CHARGED",
 
-    [long]$ActualAmount = 1000,
+    [long]$TargetAppliedAmount = 1000,
+
+    [long]$Sequence = 1,
 
     [string]$EventId,
 
@@ -27,8 +29,16 @@ if ([string]::IsNullOrWhiteSpace($EventId)) {
     $EventId = New-TestIdentifier -Prefix "billing"
 }
 
-if ($ActualAmount -le 0) {
-    throw "실제 과금 금액은 0보다 커야 합니다."
+if ($TargetAppliedAmount -lt 0) {
+    throw "최종 적용 과금액은 0보다 작을 수 없습니다."
+}
+
+if ($EventType -eq "CHARGED" -and $TargetAppliedAmount -eq 0) {
+    throw "CHARGED의 최종 적용 과금액은 0보다 커야 합니다."
+}
+
+if ($Sequence -le 0) {
+    throw "과금 이벤트 순번은 0보다 커야 합니다."
 }
 
 if ($OccurredAt -eq [DateTimeOffset]::MinValue) {
@@ -39,7 +49,8 @@ $message = @{
     eventId = $EventId
     reservationId = $ReservationId
     eventType = $EventType
-    actualAmount = $ActualAmount
+    targetAppliedAmount = $TargetAppliedAmount
+    sequence = $Sequence
     occurredAt = $OccurredAt.ToUniversalTime().ToString("o")
 }
 

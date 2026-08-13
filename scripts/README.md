@@ -180,7 +180,8 @@ HMAC ADMIN 권한으로 테스트 캠페인을 등록하거나 변경한다.
 .\scripts\publish-billing-event.ps1 `
   -ReservationId reservation-local-1 `
   -EventType CHARGED `
-  -ActualAmount 1000
+  -TargetAppliedAmount 1000 `
+  -Sequence 1
 ```
 
 `EventType`은 `CHARGED`, `ADJUSTED`, `CANCELLED` 중 하나다.

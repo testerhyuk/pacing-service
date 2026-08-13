@@ -29,6 +29,7 @@ local function eventResult(status)
         'reservationStatus',
         'appliedAmount',
         'reservationVersion',
+        'lastBillingSequence',
         'totalOverageAmount',
         'dailyOverageAmount'
     )
@@ -47,7 +48,8 @@ local function eventResult(status)
         values[4],
         values[5],
         values[6],
-        values[7]
+        values[7],
+        values[8]
     }
 end
 
@@ -106,7 +108,8 @@ local reservationFields = {
     'status',
     'reservedAtEpochMillis',
     'expiresAtEpochMillis',
-    'version'
+    'version',
+    'lastBillingSequence'
 }
 
 local expectedReservation = {
@@ -118,7 +121,8 @@ local expectedReservation = {
     ARGV[7],
     ARGV[8],
     ARGV[9],
-    ARGV[10]
+    ARGV[10],
+    ARGV[11]
 }
 
 if not allFieldsMatch(
@@ -131,7 +135,26 @@ end
 
 
 -- =========================================================
--- 4. 현재 BudgetState를 Redis 안에서 읽는다.
+-- 4. 예약별 Billing Event 순번 확인
+-- =========================================================
+
+local currentBillingSequence = requiredNumber(
+    reservationKey,
+    'lastBillingSequence'
+)
+local incomingBillingSequence = tonumber(ARGV[12])
+
+if not currentBillingSequence or not incomingBillingSequence then
+    return {'INVALID_STATE'}
+end
+
+if incomingBillingSequence > currentBillingSequence + 1 then
+    return {'SEQUENCE_GAP'}
+end
+
+
+-- =========================================================
+-- 5. 현재 BudgetState를 Redis 안에서 읽는다.
 --
 -- Java가 읽었던 예전 절대값을 사용하지 않는다.
 -- Lua 실행 시점의 최신 상태를 사용한다.
@@ -166,13 +189,13 @@ end
 
 
 -- =========================================================
--- 5. Java에서 계산한 변화량
+-- 6. Java에서 계산한 변화량
 -- =========================================================
 
-local totalSpentDelta = tonumber(ARGV[11])
-local totalReservedDelta = tonumber(ARGV[12])
-local dailySpentDelta = tonumber(ARGV[13])
-local dailyReservedDelta = tonumber(ARGV[14])
+local totalSpentDelta = tonumber(ARGV[13])
+local totalReservedDelta = tonumber(ARGV[14])
+local dailySpentDelta = tonumber(ARGV[15])
+local dailyReservedDelta = tonumber(ARGV[16])
 
 if not totalSpentDelta
         or not totalReservedDelta
@@ -183,7 +206,46 @@ end
 
 
 -- =========================================================
--- 6. 최신 Redis 값 기준 다음 상태 계산
+-- 이미 더 높은 순번이 반영된 이벤트는 현재 상태 그대로 완료한다.
+if incomingBillingSequence <= currentBillingSequence then
+    local currentReservationStatus = redis.call(
+        'HGET', reservationKey, 'status'
+    )
+    local currentAppliedAmount = redis.call(
+        'HGET', reservationKey, 'appliedAmount'
+    )
+    local currentReservationVersion = redis.call(
+        'HGET', reservationKey, 'version'
+    )
+
+    local totalOverage = math.max(
+        0,
+        totalSpent + totalReserved - totalBudget
+    )
+    local dailyOverage = math.max(
+        0,
+        dailySpent + dailyReserved - dailyBudgetLimit
+    )
+
+    redis.call(
+        'HSET',
+        eventKey,
+        'eventId', ARGV[1],
+        'reservationId', ARGV[2],
+        'reservationStatus', currentReservationStatus,
+        'appliedAmount', currentAppliedAmount,
+        'reservationVersion', currentReservationVersion,
+        'lastBillingSequence', tostring(currentBillingSequence),
+        'totalOverageAmount', tostring(totalOverage),
+        'dailyOverageAmount', tostring(dailyOverage)
+    )
+    redis.call('PEXPIRE', eventKey, ARGV[19])
+    return eventResult('STALE')
+end
+
+
+-- =========================================================
+-- 7. 최신 Redis 값 기준 다음 상태 계산
 -- =========================================================
 
 local nextTotalSpent =
@@ -216,21 +278,21 @@ end
 
 
 -- =========================================================
--- 7. 공유 BudgetState를 delta로 원자 반영
+-- 8. 공유 BudgetState를 delta로 원자 반영
 -- =========================================================
 
 redis.call(
     'HINCRBY',
     totalKey,
     'totalSpentAmount',
-    ARGV[11]
+    ARGV[13]
 )
 
 redis.call(
     'HINCRBY',
     totalKey,
     'totalReservedAmount',
-    ARGV[12]
+    ARGV[14]
 )
 
 redis.call(
@@ -244,14 +306,14 @@ redis.call(
     'HINCRBY',
     dailyKey,
     'dailySpentAmount',
-    ARGV[13]
+    ARGV[15]
 )
 
 redis.call(
     'HINCRBY',
     dailyKey,
     'dailyReservedAmount',
-    ARGV[14]
+    ARGV[16]
 )
 
 redis.call(
@@ -263,14 +325,15 @@ redis.call(
 
 
 -- =========================================================
--- 8. Reservation 상태 변경
+-- 9. Reservation 상태 변경
 -- =========================================================
 
 redis.call(
     'HSET',
     reservationKey,
-    'status', ARGV[15],
-    'appliedAmount', ARGV[16]
+    'status', ARGV[17],
+    'appliedAmount', ARGV[18],
+    'lastBillingSequence', ARGV[12]
 )
 
 local nextReservationVersion = tostring(
@@ -290,7 +353,7 @@ redis.call(
 
 
 -- =========================================================
--- 9. 실제 반영 후 상태 기준 overage 계산
+-- 10. 실제 반영 후 상태 기준 overage 계산
 --
 -- Java에서 읽었던 stale BudgetState가 아니라
 -- 이 Lua가 실제 반영한 최신 상태로 계산한다.
@@ -317,7 +380,7 @@ end
 
 
 -- =========================================================
--- 10. 처리 Event 저장
+-- 11. 처리 Event 저장
 -- =========================================================
 
 redis.call(
@@ -325,9 +388,10 @@ redis.call(
     eventKey,
     'eventId', ARGV[1],
     'reservationId', ARGV[2],
-    'reservationStatus', ARGV[15],
-    'appliedAmount', ARGV[16],
+    'reservationStatus', ARGV[17],
+    'appliedAmount', ARGV[18],
     'reservationVersion', nextReservationVersion,
+    'lastBillingSequence', ARGV[12],
     'totalOverageAmount', tostring(totalOverage),
     'dailyOverageAmount', tostring(dailyOverage)
 )
@@ -335,13 +399,13 @@ redis.call(
 redis.call(
     'PEXPIRE',
     eventKey,
-    ARGV[17]
+    ARGV[19]
 )
 
 redis.call(
     'PEXPIRE',
     reservationKey,
-    ARGV[18]
+    ARGV[20]
 )
 
 return eventResult('APPLIED')

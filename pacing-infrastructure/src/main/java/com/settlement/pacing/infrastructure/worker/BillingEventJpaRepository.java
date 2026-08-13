@@ -12,10 +12,9 @@ import java.util.Optional;
 public interface BillingEventJpaRepository
         extends JpaRepository<BillingEventEntity, String> {
 
-    Optional<BillingEventEntity>
-    findFirstByReservationIdAndProcessingStatusOrderByOccurredAtDesc(
+    Optional<BillingEventEntity> findByReservationIdAndEventSequence(
             String reservationId,
-            BillingEventProcessingState processingStatus
+            long eventSequence
     );
 
     @Modifying
@@ -25,7 +24,8 @@ public interface BillingEventJpaRepository
                 event_id,
                 reservation_id,
                 event_type,
-                actual_amount,
+                target_applied_amount,
+                event_sequence,
                 occurred_at,
                 processing_status,
                 created_at,
@@ -35,19 +35,21 @@ public interface BillingEventJpaRepository
                 :eventId,
                 :reservationId,
                 :eventType,
-                :actualAmount,
+                :targetAppliedAmount,
+                :eventSequence,
                 :occurredAt,
                 'RECEIVED',
                 :now,
                 :now
             )
-            ON CONFLICT (event_id) DO NOTHING
+            ON CONFLICT DO NOTHING
             """, nativeQuery = true)
     int insertIfAbsent(
             @Param("eventId") String eventId,
             @Param("reservationId") String reservationId,
             @Param("eventType") String eventType,
-            @Param("actualAmount") long actualAmount,
+            @Param("targetAppliedAmount") long targetAppliedAmount,
+            @Param("eventSequence") long eventSequence,
             @Param("occurredAt") Instant occurredAt,
             @Param("now") Instant now
     );

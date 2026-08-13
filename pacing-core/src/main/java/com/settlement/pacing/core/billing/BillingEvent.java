@@ -11,7 +11,8 @@ public record BillingEvent(
         String eventId,
         String reservationId,
         BillingEventType eventType,
-        Money actualAmount,
+        Money targetAppliedAmount,
+        long sequence,
         Instant occurredAt
 ) {
     public BillingEvent {
@@ -28,16 +29,23 @@ public record BillingEvent(
         }
 
         if (eventType == null
-                || actualAmount == null
+                || targetAppliedAmount == null
                 || occurredAt == null) {
             throw new IllegalArgumentException(
                     "과금 이벤트 값은 null일 수 없습니다"
             );
         }
 
-        if (actualAmount.isZero()) {
+        if (sequence <= 0) {
             throw new IllegalArgumentException(
-                    "과금 이벤트 금액은 0보다 커야 합니다"
+                    "과금 이벤트 순번은 0보다 커야 합니다"
+            );
+        }
+
+        if (eventType == BillingEventType.CHARGED
+                && targetAppliedAmount.isZero()) {
+            throw new IllegalArgumentException(
+                    "과금 확정 후 적용 금액은 0보다 커야 합니다"
             );
         }
     }

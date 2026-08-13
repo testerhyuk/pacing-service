@@ -148,7 +148,8 @@ public class RedisExpiredReservationAdapter
                     snapshot.reservation().reservationId(),
                     snapshot.reservation().status(),
                     snapshot.appliedAmount(),
-                    snapshot.version()
+                    snapshot.version(),
+                    snapshot.lastBillingSequence()
             );
             return CandidateResult.SKIPPED;
         }
@@ -180,7 +181,8 @@ public class RedisExpiredReservationAdapter
                         reservationId,
                         ReservationStatus.EXPIRED,
                         snapshot.appliedAmount(),
-                        transition.reservationVersion()
+                        transition.reservationVersion(),
+                        snapshot.lastBillingSequence()
                 );
                 yield CandidateResult.EXPIRED;
             }
