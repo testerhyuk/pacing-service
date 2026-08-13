@@ -86,7 +86,8 @@ public record PacingWorkerProperties(
     public record Reconciliation(
             @NotBlank String cron,
             @NotNull ZoneId zoneId,
-            @Min(1) int batchSize
+            @Min(1) int batchSize,
+            @Min(1) int maxRepairAttempts
     ) {
     }
 

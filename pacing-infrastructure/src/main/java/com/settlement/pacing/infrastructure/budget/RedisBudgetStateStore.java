@@ -16,13 +16,15 @@ public class RedisBudgetStateStore {
     private final RedisScript<List> readBudgetStateScript;
     private final RedisScript<Long> initializeBudgetStateScript;
     private final RedisScript<List> updateBudgetLimitsScript;
+    private final RedisScript<List> repairBudgetStateScript;
 
     public RedisBudgetStateStore(
             StringRedisTemplate redisTemplate,
             RedisKeyFactory keyFactory,
             RedisScript<List> readBudgetStateScript,
             RedisScript<Long> initializeBudgetStateScript,
-            RedisScript<List> updateBudgetLimitsScript
+            RedisScript<List> updateBudgetLimitsScript,
+            RedisScript<List> repairBudgetStateScript
     ) {
         this.redisTemplate = redisTemplate;
         this.keyFactory = keyFactory;
@@ -30,6 +32,7 @@ public class RedisBudgetStateStore {
         this.initializeBudgetStateScript =
                 initializeBudgetStateScript;
         this.updateBudgetLimitsScript = updateBudgetLimitsScript;
+        this.repairBudgetStateScript = repairBudgetStateScript;
     }
 
     public ReadResult read(
@@ -200,6 +203,95 @@ public class RedisBudgetStateStore {
         );
     }
 
+    public RepairResult repairIfVersionMatches(
+            BudgetState repairedState,
+            long expectedTotalVersion,
+            long expectedDailyVersion
+    ) {
+        if (repairedState == null) {
+            throw new IllegalArgumentException(
+                    "보정할 BudgetState는 null일 수 없습니다"
+            );
+        }
+        if (expectedTotalVersion < 0
+                || expectedDailyVersion < 0) {
+            throw new IllegalArgumentException(
+                    "예상 예산 version은 음수일 수 없습니다"
+            );
+        }
+
+        List<?> result = redisTemplate.execute(
+                repairBudgetStateScript,
+                List.of(
+                        keyFactory.totalBudget(
+                                repairedState.campaignId()
+                        ),
+                        keyFactory.dailyBudget(
+                                repairedState.campaignId(),
+                                repairedState.budgetDate()
+                        )
+                ),
+                Long.toString(expectedTotalVersion),
+                Long.toString(expectedDailyVersion),
+                Long.toString(
+                        repairedState.totalSpentAmount().amount()
+                ),
+                Long.toString(
+                        repairedState.totalReservedAmount().amount()
+                ),
+                Long.toString(
+                        repairedState.dailySpentAmount().amount()
+                ),
+                Long.toString(
+                        repairedState.dailyReservedAmount().amount()
+                )
+        );
+
+        if (result == null || result.isEmpty()) {
+            throw corrupted(
+                    "Redis 예산 보정 결과가 비어있습니다",
+                    null
+            );
+        }
+
+        RepairStatus status;
+        try {
+            status = RepairStatus.valueOf(value(result, 0));
+        } catch (IllegalArgumentException exception) {
+            throw corrupted(
+                    "알 수 없는 Redis 예산 보정 결과입니다: "
+                            + value(result, 0),
+                    exception
+            );
+        }
+
+        if (status == RepairStatus.CORRUPTED
+                || status == RepairStatus.INVALID_STATE) {
+            throw corrupted(
+                    "Redis 예산 상태를 안전하게 보정할 수 없습니다: "
+                            + status,
+                    null
+            );
+        }
+
+        if (status == RepairStatus.MISSING) {
+            return new RepairResult(status, -1L, -1L);
+        }
+
+        if (result.size() != 3) {
+            throw corrupted(
+                    "Redis 예산 보정 결과 필드 수가 올바르지 않습니다",
+                    null
+            );
+        }
+
+        return new RepairResult(
+                status,
+                parseVersion(result, 1),
+                parseVersion(result, 2)
+        );
+    }
+
     private long parseAmount(List<?> result, int index) {
         long parsed = Long.parseLong(value(result, index));
 
@@ -281,6 +373,21 @@ public class RedisBudgetStateStore {
             LimitUpdateStatus status,
             long previousTotalBudget,
             long previousDailyBudgetLimit
+    ) {
+    }
+
+    public enum RepairStatus {
+        UPDATED,
+        VERSION_MISMATCH,
+        MISSING,
+        CORRUPTED,
+        INVALID_STATE
+    }
+
+    public record RepairResult(
+            RepairStatus status,
+            long totalVersion,
+            long dailyVersion
     ) {
     }
 }

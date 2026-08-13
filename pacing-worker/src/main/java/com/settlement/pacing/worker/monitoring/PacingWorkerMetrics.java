@@ -138,6 +138,14 @@ public class PacingWorkerMetrics {
                 "UNAVAILABLE",
                 result.unavailable()
         );
+        recordReconciliationResult(
+                "REPAIRED",
+                result.repaired()
+        );
+        recordReconciliationResult(
+                "VERSION_CONFLICT",
+                result.versionConflicts()
+        );
 
         if (result.mismatchAmount() > 0L) {
             Counter.builder(

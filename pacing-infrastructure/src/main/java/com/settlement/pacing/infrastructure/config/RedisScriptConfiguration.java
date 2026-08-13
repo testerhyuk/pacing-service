@@ -34,6 +34,11 @@ public class RedisScriptConfiguration {
     }
 
     @Bean
+    public RedisScript<List> repairBudgetStateScript() {
+        return listScript("redis/repair_budget_state.lua");
+    }
+
+    @Bean
     public RedisScript<List> reserveBudgetScript() {
         return listScript("redis/reserve_budget.lua");
     }

@@ -93,6 +93,7 @@ pacing:
       cron: "${PACING_WORKER_RECONCILIATION_CRON:0 10 0 * * *}"
       zone-id: ${PACING_WORKER_RECONCILIATION_ZONE_ID:Asia/Seoul}
       batch-size: ${PACING_WORKER_RECONCILIATION_BATCH_SIZE:500}
+      max-repair-attempts: ${PACING_WORKER_RECONCILIATION_MAX_REPAIR_ATTEMPTS:3}
 
 management:
   server:
