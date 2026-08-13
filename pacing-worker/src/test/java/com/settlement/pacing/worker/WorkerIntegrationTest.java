@@ -11,6 +11,7 @@ import com.settlement.pacing.infrastructure.budget.BudgetReservationEntity;
 import com.settlement.pacing.infrastructure.budget.RedisBudgetStateStore;
 import com.settlement.pacing.infrastructure.common.RedisKeyFactory;
 import com.settlement.pacing.infrastructure.worker.BillingEventPersistenceService;
+import com.settlement.pacing.infrastructure.worker.CampaignRepairScanRepository;
 import com.settlement.pacing.infrastructure.worker.ExpirationClaimRepository;
 import com.settlement.pacing.infrastructure.worker.RedisBillingTransition;
 import com.settlement.pacing.infrastructure.worker.RedisReservationSnapshot;
@@ -89,6 +90,7 @@ import static org.awaitility.Awaitility.await;
                 "pacing.worker.expiration.batch-size=100",
                 "pacing.worker.reservation-repair.enabled=false",
                 "pacing.worker.reservation-repair.claim-ttl=1m",
+                "pacing.worker.reservation-repair.campaign-scan-batch-size=1000",
                 "pacing.worker.reconciliation.enabled=false",
                 "pacing.worker.reconciliation.lock-ttl=2h"
         }
@@ -163,6 +165,9 @@ class WorkerIntegrationTest {
 
     @Autowired
     private ExpirationClaimRepository expirationClaimRepository;
+
+    @Autowired
+    private CampaignRepairScanRepository campaignRepairScanRepository;
 
     @Autowired
     private RedisBudgetStateStore budgetStateStore;
@@ -687,6 +692,32 @@ class WorkerIntegrationTest {
     }
 
     @Test
+    void 예약_복구_캠페인_조회는_cursor_다음부터_조회하고_끝에서_처음으로_돌아간다() {
+        insertCampaign("zz-repair-scan-1", 10_000L);
+        insertCampaign("zz-repair-scan-2", 10_000L);
+        insertCampaign("zz-repair-scan-3", 10_000L);
+
+        List<String> next = campaignRepairScanRepository.findNext(
+                "zz-repair-scan-1",
+                2
+        );
+        List<String> wrapped = campaignRepairScanRepository.findNext(
+                "zz-repair-scan-3",
+                2
+        );
+
+        assertThat(next).containsExactly(
+                "zz-repair-scan-2",
+                "zz-repair-scan-3"
+        );
+        assertThat(wrapped)
+                .doesNotHaveDuplicates()
+                .hasSize(2);
+        assertThat(wrapped.getFirst())
+                .isLessThanOrEqualTo("zz-repair-scan-3");
+    }
+
+    @Test
     void 여러_Worker가_같은_예약_복구_대상을_중복_처리하지_않는다()
             throws Exception {
         String campaignId = "campaign-repair-claim";
@@ -729,10 +760,14 @@ class WorkerIntegrationTest {
                     .isEqualTo(1);
             assertThat(reservationCount(reservationId)).isEqualTo(1L);
             assertThat(redisTemplate.opsForZSet().size(
-                    keyFactory.reservationPersistencePending()
+                    keyFactory.campaignReservationPersistencePending(
+                            campaignId
+                    )
             )).isZero();
             assertThat(redisTemplate.opsForZSet().size(
-                    keyFactory.reservationPersistenceProcessing()
+                    keyFactory.campaignReservationPersistenceProcessing(
+                            campaignId
+                    )
             )).isZero();
         } finally {
             executor.shutdownNow();
@@ -827,11 +862,15 @@ class WorkerIntegrationTest {
                 reservationId
         );
         redisTemplate.opsForZSet().remove(
-                keyFactory.reservationPersistencePending(),
+                keyFactory.campaignReservationPersistencePending(
+                        campaignId
+                ),
                 member
         );
         redisTemplate.opsForZSet().add(
-                keyFactory.reservationPersistenceProcessing(),
+                keyFactory.campaignReservationPersistenceProcessing(
+                        campaignId
+                ),
                 "dead-worker-token|" + member,
                 now.minusSeconds(1).toEpochMilli()
         );
@@ -842,7 +881,9 @@ class WorkerIntegrationTest {
         assertThat(result.repaired()).isEqualTo(1);
         assertThat(reservationCount(reservationId)).isEqualTo(1L);
         assertThat(redisTemplate.opsForZSet().size(
-                keyFactory.reservationPersistenceProcessing()
+                keyFactory.campaignReservationPersistenceProcessing(
+                        campaignId
+                )
         )).isZero();
     }
 
@@ -904,6 +945,7 @@ class WorkerIntegrationTest {
                 campaignId,
                 reservationId
         );
+        insertCampaign(campaignId, 10_000L);
 
         redisTemplate.opsForHash().putAll(
                 reservationKey,
@@ -911,11 +953,6 @@ class WorkerIntegrationTest {
                         "reservationId", reservationId,
                         "campaignId", campaignId
                 )
-        );
-        redisTemplate.opsForZSet().add(
-                keyFactory.reservationPersistencePending(),
-                member,
-                now.minusSeconds(10).toEpochMilli()
         );
         redisTemplate.opsForZSet().add(
                 keyFactory.campaignReservationPersistencePending(
@@ -931,18 +968,18 @@ class WorkerIntegrationTest {
 
             assertThat(result.failed()).isEqualTo(1);
             assertThat(redisTemplate.opsForZSet().score(
-                    keyFactory.reservationPersistencePending(),
+                    keyFactory.campaignReservationPersistencePending(
+                            campaignId
+                    ),
                     member
             )).isNotNull();
             assertThat(redisTemplate.opsForZSet().size(
-                    keyFactory.reservationPersistenceProcessing()
+                    keyFactory.campaignReservationPersistenceProcessing(
+                            campaignId
+                    )
             )).isZero();
         } finally {
             redisTemplate.delete(reservationKey);
-            redisTemplate.opsForZSet().remove(
-                    keyFactory.reservationPersistencePending(),
-                    member
-            );
             redisTemplate.opsForZSet().remove(
                     keyFactory.campaignReservationPersistencePending(
                             campaignId
@@ -981,11 +1018,6 @@ class WorkerIntegrationTest {
                         ),
                         "version", "0"
                 )
-        );
-        redisTemplate.opsForZSet().add(
-                keyFactory.reservationPersistencePending(),
-                member,
-                reservedAt.toEpochMilli()
         );
         redisTemplate.opsForZSet().add(
                 keyFactory.campaignReservationPersistencePending(

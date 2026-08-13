@@ -9,8 +9,6 @@ import com.settlement.pacing.worker.reconciliation.application.ReservationRepair
 import com.settlement.pacing.worker.reconciliation.application.ReservationRepairResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.data.redis.core.Cursor;
-import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 
@@ -21,6 +19,7 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class RedisReservationRepairAdapter
         implements ReservationRepairGateway {
@@ -32,27 +31,34 @@ public class RedisReservationRepairAdapter
     private final StringRedisTemplate redisTemplate;
     private final RedisKeyFactory keyFactory;
     private final ReservationPersistenceService persistenceService;
+    private final CampaignRepairScanRepository campaignScanRepository;
     private final RedisScript<Long> compensateReservationScript;
     private final RedisScript<List> claimReservationRepairsScript;
     private final RedisScript<Long> releaseReservationRepairClaimScript;
     private final RedisScript<Long> completeReservationRepairClaimScript;
     private final Clock clock;
     private final Duration claimTtl;
+    private final int campaignScanBatchSize;
+    private final AtomicReference<String> campaignCursor =
+            new AtomicReference<>();
 
     public RedisReservationRepairAdapter(
             StringRedisTemplate redisTemplate,
             RedisKeyFactory keyFactory,
             ReservationPersistenceService persistenceService,
+            CampaignRepairScanRepository campaignScanRepository,
             RedisScript<Long> compensateReservationScript,
             RedisScript<List> claimReservationRepairsScript,
             RedisScript<Long> releaseReservationRepairClaimScript,
             RedisScript<Long> completeReservationRepairClaimScript,
             Clock clock,
-            Duration claimTtl
+            Duration claimTtl,
+            int campaignScanBatchSize
     ) {
         this.redisTemplate = redisTemplate;
         this.keyFactory = keyFactory;
         this.persistenceService = persistenceService;
+        this.campaignScanRepository = campaignScanRepository;
         this.compensateReservationScript =
                 compensateReservationScript;
         this.claimReservationRepairsScript =
@@ -63,6 +69,7 @@ public class RedisReservationRepairAdapter
                 completeReservationRepairClaimScript;
         this.clock = clock;
         this.claimTtl = claimTtl;
+        this.campaignScanBatchSize = campaignScanBatchSize;
     }
 
     @Override
@@ -82,66 +89,89 @@ public class RedisReservationRepairAdapter
             );
         }
 
-        Instant claimedAt = clock.instant();
-        String claimToken = UUID.randomUUID().toString();
-        List<String> candidates = claim(
-                batchSize,
-                eligibleBefore,
-                claimedAt,
-                claimToken
+        List<String> campaignIds = campaignScanRepository.findNext(
+                campaignCursor.get(),
+                campaignScanBatchSize
         );
 
-        int scanned = 0;
-        int repaired = 0;
-        int alreadyPersisted = 0;
-        int removed = 0;
-        int failed = 0;
-
-        if (candidates == null || candidates.isEmpty()) {
-            return new ReservationRepairResult(
-                    0,
-                    0,
-                    0,
-                    0,
-                    0
-            );
+        if (campaignIds.isEmpty()) {
+            return emptyResult();
         }
 
-        for (String member : candidates) {
-            scanned++;
+        Instant claimedAt = clock.instant();
+        String claimToken = UUID.randomUUID().toString();
+        MutableResult result = new MutableResult();
 
-            try {
-                RepairOutcome outcome = repairOne(member);
-                completeClaim(member, claimToken);
+        for (String campaignId : campaignIds) {
+            int remaining = batchSize - result.scanned;
+            if (remaining <= 0) {
+                break;
+            }
 
-                switch (outcome) {
-                    case REPAIRED -> repaired++;
-                    case ALREADY_PERSISTED -> alreadyPersisted++;
-                    case REMOVED -> removed++;
-                }
-            } catch (RuntimeException exception) {
-                releaseClaimSafely(member, claimToken);
-                failed++;
-                log.error(
-                        "예약 영속화 복구에 실패했습니다: member={}",
+            campaignCursor.set(campaignId);
+
+            List<String> candidates = claim(
+                    campaignId,
+                    remaining,
+                    eligibleBefore,
+                    claimedAt,
+                    claimToken
+            );
+
+            for (String member : candidates) {
+                processClaimed(
+                        campaignId,
                         member,
-                        exception
+                        claimToken,
+                        result
                 );
             }
         }
 
-        return new ReservationRepairResult(
-                scanned,
-                repaired,
-                alreadyPersisted,
-                removed,
-                failed
-        );
+        return result.toResult();
     }
 
-    private RepairOutcome repairOne(String member) {
+    private void processClaimed(
+            String campaignId,
+            String member,
+            String claimToken,
+            MutableResult result
+    ) {
+        result.scanned++;
+
+        try {
+            RepairOutcome outcome = repairOne(campaignId, member);
+            completeClaim(campaignId, member, claimToken);
+
+            switch (outcome) {
+                case REPAIRED -> result.repaired++;
+                case ALREADY_PERSISTED -> result.alreadyPersisted++;
+                case REMOVED -> result.removed++;
+            }
+        } catch (RuntimeException exception) {
+            releaseClaimSafely(campaignId, member, claimToken);
+            result.failed++;
+            log.error(
+                    "예약 영속화 복구에 실패했습니다: member={}",
+                    member,
+                    exception
+            );
+        }
+    }
+
+    private RepairOutcome repairOne(
+            String campaignId,
+            String member
+    ) {
         RedisKeyFactory.PendingReservationKey pending =
                 keyFactory.parseReservationPersistenceMember(member);
+
+        if (!campaignId.equals(pending.campaignId())) {
+            throw new IllegalStateException(
+                    "캠페인 복구 Queue에 다른 캠페인의 예약이 들어있습니다"
+            );
+        }
+
         String reservationKey = keyFactory.reservation(
                 pending.campaignId(),
                 pending.reservationId()
@@ -181,7 +211,7 @@ public class RedisReservationRepairAdapter
 
         if (status != ReservationStatus.RESERVED) {
             throw new IllegalStateException(
-                    "PostgreSQL에 없는 Redis 예약이 RESERVED 상태가 아닙니다"
+                    "PostgreSQL에 없는 Redis 예약은 RESERVED 상태여야 합니다"
             );
         }
 
@@ -189,9 +219,7 @@ public class RedisReservationRepairAdapter
                 required(values, "reservationId"),
                 required(values, "campaignId"),
                 LocalDate.parse(required(values, "budgetDate")),
-                new Money(Long.parseLong(
-                        required(values, "amount")
-                )),
+                new Money(Long.parseLong(required(values, "amount"))),
                 status,
                 Instant.ofEpochMilli(Long.parseLong(
                         required(values, "reservedAtEpochMillis")
@@ -235,6 +263,7 @@ public class RedisReservationRepairAdapter
     }
 
     private List<String> claim(
+            String campaignId,
             int batchSize,
             Instant eligibleBefore,
             Instant claimedAt,
@@ -243,8 +272,12 @@ public class RedisReservationRepairAdapter
         List<?> claimed = redisTemplate.execute(
                 claimReservationRepairsScript,
                 List.of(
-                        keyFactory.reservationPersistencePending(),
-                        keyFactory.reservationPersistenceProcessing()
+                        keyFactory.campaignReservationPersistencePending(
+                                campaignId
+                        ),
+                        keyFactory.campaignReservationPersistenceProcessing(
+                                campaignId
+                        )
                 ),
                 Long.toString(eligibleBefore.toEpochMilli()),
                 Long.toString(claimedAt.toEpochMilli()),
@@ -265,31 +298,28 @@ public class RedisReservationRepairAdapter
     }
 
     private void completeClaim(
+            String campaignId,
             String member,
             String claimToken
     ) {
-        RedisKeyFactory.PendingReservationKey pending =
-                keyFactory.parseReservationPersistenceMember(member);
-
         redisTemplate.execute(
                 completeReservationRepairClaimScript,
                 List.of(
-                        keyFactory.reservationPersistenceProcessing(),
-                        keyFactory.campaignReservationPersistencePending(
-                                pending.campaignId()
+                        keyFactory.campaignReservationPersistenceProcessing(
+                                campaignId
                         )
                 ),
-                claimedMember(claimToken, member),
-                member
+                claimedMember(claimToken, member)
         );
     }
 
     private void releaseClaimSafely(
+            String campaignId,
             String member,
             String claimToken
     ) {
         try {
-            releaseClaim(member, claimToken);
+            releaseClaim(campaignId, member, claimToken);
         } catch (RuntimeException releaseException) {
             log.error(
                     "예약 영속화 복구 선점 해제에 실패했습니다: member={}",
@@ -300,14 +330,19 @@ public class RedisReservationRepairAdapter
     }
 
     private void releaseClaim(
+            String campaignId,
             String member,
             String claimToken
     ) {
         redisTemplate.execute(
                 releaseReservationRepairClaimScript,
                 List.of(
-                        keyFactory.reservationPersistencePending(),
-                        keyFactory.reservationPersistenceProcessing()
+                        keyFactory.campaignReservationPersistencePending(
+                                campaignId
+                        ),
+                        keyFactory.campaignReservationPersistenceProcessing(
+                                campaignId
+                        )
                 ),
                 claimedMember(claimToken, member),
                 member,
@@ -343,9 +378,31 @@ public class RedisReservationRepairAdapter
         return value.toString();
     }
 
+    private ReservationRepairResult emptyResult() {
+        return new ReservationRepairResult(0, 0, 0, 0, 0);
+    }
+
     private enum RepairOutcome {
         REPAIRED,
         ALREADY_PERSISTED,
         REMOVED
+    }
+
+    private static final class MutableResult {
+        private int scanned;
+        private int repaired;
+        private int alreadyPersisted;
+        private int removed;
+        private int failed;
+
+        private ReservationRepairResult toResult() {
+            return new ReservationRepairResult(
+                    scanned,
+                    repaired,
+                    alreadyPersisted,
+                    removed,
+                    failed
+            );
+        }
     }
 }

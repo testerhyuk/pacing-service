@@ -1,10 +1,13 @@
 package com.settlement.pacing.worker.config;
 
+import jakarta.validation.Validation;
+import jakarta.validation.ValidatorFactory;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 import java.time.ZoneId;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class PacingWorkerPropertiesTest {
@@ -77,6 +80,27 @@ class PacingWorkerPropertiesTest {
                 );
     }
 
+    @Test
+    void 예약_복구_캠페인_조회_크기는_0보다_커야_한다() {
+        PacingWorkerProperties.ReservationRepair properties =
+                new PacingWorkerProperties.ReservationRepair(
+                        Duration.ofSeconds(10),
+                        Duration.ofSeconds(5),
+                        Duration.ofMinutes(1),
+                        100,
+                        0
+                );
+
+        try (ValidatorFactory factory =
+                     Validation.buildDefaultValidatorFactory()) {
+            assertThat(factory.getValidator().validate(properties))
+                    .anySatisfy(violation ->
+                            assertThat(violation.getPropertyPath().toString())
+                                    .isEqualTo("campaignScanBatchSize")
+                    );
+        }
+    }
+
     private PacingWorkerProperties.Kafka kafka() {
         return new PacingWorkerProperties.Kafka(
                 "billing.events",
@@ -105,6 +129,7 @@ class PacingWorkerPropertiesTest {
                 Duration.ofSeconds(10),
                 Duration.ofSeconds(5),
                 Duration.ofMinutes(1),
+                100,
                 100
         );
     }

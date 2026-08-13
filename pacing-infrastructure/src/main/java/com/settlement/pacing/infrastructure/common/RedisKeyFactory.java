@@ -129,19 +129,20 @@ public class RedisKeyFactory {
                 + "}";
     }
 
-    public String reservationPersistencePending() {
-        return keyPrefix + ":reservation-persistence-pending";
-    }
-
-    public String reservationPersistenceProcessing() {
-        return keyPrefix + ":reservation-persistence-processing";
-    }
-
     public String campaignReservationPersistencePending(
             String campaignId
     ) {
         return keyPrefix
                 + ":reservation-persistence-pending:{"
+                + encode(campaignId)
+                + "}";
+    }
+
+    public String campaignReservationPersistenceProcessing(
+            String campaignId
+    ) {
+        return keyPrefix
+                + ":reservation-persistence-processing:{"
                 + encode(campaignId)
                 + "}";
     }
