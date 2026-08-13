@@ -25,8 +25,11 @@ public class BillingEventEntity {
     @Column(name = "event_type", nullable = false, length = 20)
     private BillingEventType eventType;
 
-    @Column(name = "actual_amount", nullable = false)
-    private long actualAmount;
+    @Column(name = "target_applied_amount", nullable = false)
+    private long targetAppliedAmount;
+
+    @Column(name = "event_sequence", nullable = false)
+    private long eventSequence;
 
     @Column(name = "occurred_at", nullable = false)
     private Instant occurredAt;
@@ -78,8 +81,12 @@ public class BillingEventEntity {
         return eventType;
     }
 
-    public long getActualAmount() {
-        return actualAmount;
+    public long getTargetAppliedAmount() {
+        return targetAppliedAmount;
+    }
+
+    public long getEventSequence() {
+        return eventSequence;
     }
 
     public Instant getOccurredAt() {

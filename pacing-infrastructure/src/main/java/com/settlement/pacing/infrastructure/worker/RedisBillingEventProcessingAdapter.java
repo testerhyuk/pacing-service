@@ -64,13 +64,6 @@ public class RedisBillingEventProcessingAdapter
                         )
                 );
 
-        Optional<BillingEventProcessingResult> stale =
-                persistenceService.completeIfStale(event, entity);
-
-        if (stale.isPresent()) {
-            return stale.get();
-        }
-
         Optional<RedisBillingTransition> alreadyApplied =
                 workerStateStore.findAppliedBillingEvent(
                         entity.getCampaignId(),
@@ -94,6 +87,15 @@ public class RedisBillingEventProcessingAdapter
         RedisReservationSnapshot reservationSnapshot =
                 workerStateStore.getOrInitialize(entity);
 
+        if (event.sequence()
+                > reservationSnapshot.lastBillingSequence() + 1) {
+            throw new RetryableBillingEventException(
+                    "선행 과금 이벤트가 아직 처리되지 않았습니다: "
+                            + event.reservationId()
+                            + "/" + event.sequence()
+            );
+        }
+
         if (event.occurredAt().isBefore(
                 reservationSnapshot.reservation().reservedAt()
         )) {
@@ -106,6 +108,23 @@ public class RedisBillingEventProcessingAdapter
                 reservationSnapshot.reservation().campaignId(),
                 reservationSnapshot.reservation().budgetDate()
         );
+
+        if (event.sequence()
+                <= reservationSnapshot.lastBillingSequence()) {
+            RedisBillingTransition transition = staleTransition(
+                    event,
+                    currentBudget,
+                    reservationSnapshot
+            );
+            persistenceService.complete(
+                    event.eventId(),
+                    transition
+            );
+            return result(
+                    BillingEventProcessingStatus.STALE,
+                    transition
+            );
+        }
 
         BillingResult billingResult = processDomain(
                 currentBudget,
@@ -126,14 +145,16 @@ public class RedisBillingEventProcessingAdapter
                 transition
         );
 
-        return result(
+        BillingEventProcessingStatus status = switch (
                 transition.transitionStatus()
-                        == RedisBillingTransition
-                        .RedisTransitionStatus.APPLIED
-                        ? BillingEventProcessingStatus.APPLIED
-                        : BillingEventProcessingStatus.DUPLICATE,
-                transition
-        );
+        ) {
+            case APPLIED -> BillingEventProcessingStatus.APPLIED;
+            case ALREADY_APPLIED ->
+                    BillingEventProcessingStatus.DUPLICATE;
+            case STALE -> BillingEventProcessingStatus.STALE;
+        };
+
+        return result(status, transition);
     }
 
     private BillingEventProcessingResult result(
@@ -149,6 +170,39 @@ public class RedisBillingEventProcessingAdapter
                 transition.totalOverageAmount(),
                 transition.dailyOverageAmount()
         );
+    }
+
+    private RedisBillingTransition staleTransition(
+            BillingEvent event,
+            BudgetState budgetState,
+            RedisReservationSnapshot reservation
+    ) {
+        return new RedisBillingTransition(
+                RedisBillingTransition.RedisTransitionStatus.STALE,
+                event.eventId(),
+                event.reservationId(),
+                reservation.reservation().status(),
+                reservation.appliedAmount(),
+                reservation.version(),
+                reservation.lastBillingSequence(),
+                overage(
+                        budgetState.totalEffectiveSpend(),
+                        budgetState.totalBudget()
+                ),
+                overage(
+                        budgetState.dailyEffectiveSpend(),
+                        budgetState.dailyBudgetLimit()
+                )
+        );
+    }
+
+    private com.settlement.pacing.core.budget.Money overage(
+            com.settlement.pacing.core.budget.Money effective,
+            com.settlement.pacing.core.budget.Money limit
+    ) {
+        return limit.isLessThan(effective)
+                ? effective.subtract(limit)
+                : com.settlement.pacing.core.budget.Money.zero();
     }
 
     @Override
@@ -204,12 +258,8 @@ public class RedisBillingEventProcessingAdapter
             );
         } catch (IllegalStateException
                  | IllegalArgumentException exception) {
-            /*
-             * CHARGED보다 ADJUSTED가 먼저 도착한 경우처럼
-             * 선행 이벤트가 처리되면 해결될 수 있으므로 재시도한다.
-             */
-            throw new RetryableBillingEventException(
-                    "현재 예약 상태에는 과금 이벤트를 적용할 수 없습니다",
+            throw new NonRetryableBillingEventException(
+                    "과금 이벤트가 현재 예약 상태와 일치하지 않습니다",
                     exception
             );
         }

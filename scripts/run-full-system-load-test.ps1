@@ -343,7 +343,8 @@ function Publish-BillingLoad {
                     eventId = $eventId
                     reservationId = $reservationId
                     eventType = "CHARGED"
-                    actualAmount = $Amount
+                    targetAppliedAmount = $Amount
+                    sequence = 1
                     occurredAt = $occurredAt
                 }
 

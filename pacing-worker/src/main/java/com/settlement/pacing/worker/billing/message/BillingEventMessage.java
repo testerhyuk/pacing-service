@@ -11,7 +11,8 @@ public record BillingEventMessage(
         String eventId,
         String reservationId,
         BillingEventType eventType,
-        long actualAmount,
+        long targetAppliedAmount,
+        long sequence,
         Instant occurredAt
 ) {
     public BillingEvent toDomain() {
@@ -19,7 +20,8 @@ public record BillingEventMessage(
                 eventId,
                 reservationId,
                 eventType,
-                new Money(actualAmount),
+                new Money(targetAppliedAmount),
+                sequence,
                 occurredAt == null
                         ? null
                         : occurredAt.truncatedTo(ChronoUnit.MICROS)

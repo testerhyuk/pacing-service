@@ -121,6 +121,26 @@ public record BudgetReservation(
     }
 
     /**
+     * 현재 순 과금액에 맞춰 예약의 정산 상태를 변경한다.
+     * 일부 금액이 남으면 CONFIRMED, 전액 취소되면 CANCELLED가 된다.
+     */
+    public BudgetReservation reconcileAppliedAmount(
+            Money appliedAmount
+    ) {
+        if (appliedAmount == null) {
+            throw new IllegalArgumentException(
+                    "적용 과금액은 null일 수 없습니다"
+            );
+        }
+
+        return withStatus(
+                appliedAmount.isZero()
+                        ? ReservationStatus.CANCELLED
+                        : ReservationStatus.CONFIRMED
+        );
+    }
+
+    /**
      * 만료 시각이 지난 RESERVED 예약을 EXPIRED 상태로 변경한다.
      */
     public BudgetReservation expireAt(Instant now) {

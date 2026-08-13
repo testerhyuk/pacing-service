@@ -26,14 +26,16 @@ if ($TimeoutSeconds -le 0) {
 $campaignId = New-TestIdentifier -Prefix "billing-consistency-campaign"
 $duplicateReservationId = New-TestIdentifier -Prefix "billing-duplicate-reservation"
 $outOfOrderReservationId = New-TestIdentifier -Prefix "billing-out-of-order-reservation"
-$staleReservationId = New-TestIdentifier -Prefix "billing-stale-reservation"
+$reconciliationReservationId = New-TestIdentifier -Prefix "billing-reconciliation-reservation"
 $lifecycleReservationId = New-TestIdentifier -Prefix "billing-lifecycle-reservation"
 
 $duplicateChargeEventId = New-TestIdentifier -Prefix "billing-duplicate-charge"
 $outOfOrderChargeEventId = New-TestIdentifier -Prefix "billing-out-of-order-charge"
 $outOfOrderAdjustEventId = New-TestIdentifier -Prefix "billing-out-of-order-adjust"
-$staleChargeEventId = New-TestIdentifier -Prefix "billing-stale-charge"
-$staleAdjustEventId = New-TestIdentifier -Prefix "billing-stale-adjust"
+$reconciliationChargeEventId = New-TestIdentifier -Prefix "billing-reconciliation-charge"
+$reconciliationPartialCancelEventId = New-TestIdentifier -Prefix "billing-reconciliation-partial-cancel"
+$reconciliationFullCancelEventId = New-TestIdentifier -Prefix "billing-reconciliation-full-cancel"
+$reconciliationReopenEventId = New-TestIdentifier -Prefix "billing-reconciliation-reopen"
 $lifecycleChargeEventId = New-TestIdentifier -Prefix "billing-lifecycle-charge"
 $lifecycleAdjustEventId = New-TestIdentifier -Prefix "billing-lifecycle-adjust"
 $lifecycleCancelEventId = New-TestIdentifier -Prefix "billing-lifecycle-cancel"
@@ -42,14 +44,15 @@ $reservationAmount = 1000L
 $duplicateChargeAmount = 900L
 $outOfOrderChargeAmount = 800L
 $outOfOrderAdjustedAmount = 1200L
-$staleChargeAmount = 700L
-$staleAdjustedAmount = 950L
+$reconciliationChargeAmount = 700L
+$reconciliationPartialCancelAmount = 400L
+$reconciliationReopenAmount = 300L
 $lifecycleAdjustedAmount = 1100L
 $duplicateDeliveryCount = 4
 $expectedFinalSpend = (
     $duplicateChargeAmount +
     $outOfOrderAdjustedAmount +
-    $staleChargeAmount
+    $reconciliationReopenAmount
 )
 
 function Get-DbValue {
@@ -71,7 +74,8 @@ function Get-ReservationState {
 
     return Get-DbValue -Sql (
         "SELECT status || '|' || amount || '|' || " +
-        "applied_amount || '|' || version " +
+        "applied_amount || '|' || version || '|' || " +
+        "last_billing_sequence " +
         "FROM budget_reservation " +
         "WHERE reservation_id = $literal"
     )
@@ -88,21 +92,6 @@ function Get-BillingProcessingStatus {
     return Get-DbValue -Sql (
         "SELECT processing_status FROM billing_event " +
         "WHERE event_id = $literal"
-    )
-}
-
-function Get-BillingResultState {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$EventId
-    )
-
-    $literal = ConvertTo-SqlLiteral -Value $EventId
-
-    return Get-DbValue -Sql (
-        "SELECT processing_status || '|' || result_status || '|' || " +
-        "result_applied_amount || '|' || reservation_version " +
-        "FROM billing_event WHERE event_id = $literal"
     )
 }
 
@@ -212,7 +201,10 @@ function Publish-BillingEvent {
         [string]$EventType,
 
         [Parameter(Mandatory = $true)]
-        [long]$ActualAmount,
+        [long]$TargetAppliedAmount,
+
+        [Parameter(Mandatory = $true)]
+        [long]$Sequence,
 
         [Parameter(Mandatory = $true)]
         [DateTimeOffset]$OccurredAt
@@ -224,7 +216,8 @@ function Publish-BillingEvent {
         -ReservationId $ReservationId `
         -EventId $EventId `
         -EventType $EventType `
-        -ActualAmount $ActualAmount `
+        -TargetAppliedAmount $TargetAppliedAmount `
+        -Sequence $Sequence `
         -OccurredAt $OccurredAt `
         -PassThru `
         -EnvironmentFile $EnvironmentFile)
@@ -306,7 +299,7 @@ try {
     $reservationIds = @(
         $duplicateReservationId,
         $outOfOrderReservationId,
-        $staleReservationId,
+        $reconciliationReservationId,
         $lifecycleReservationId
     )
 
@@ -317,7 +310,7 @@ try {
     foreach ($reservationId in $reservationIds) {
         Wait-ForReservationState `
             -ReservationId $reservationId `
-            -ExpectedState "RESERVED|1000|0|0"
+            -ExpectedState "RESERVED|1000|0|0|0"
     }
 
     $eventBaseTime = [DateTimeOffset]::UtcNow.AddSeconds(1)
@@ -328,7 +321,8 @@ try {
         -ReservationId $duplicateReservationId `
         -EventId $duplicateChargeEventId `
         -EventType "CHARGED" `
-        -ActualAmount $duplicateChargeAmount `
+        -TargetAppliedAmount $duplicateChargeAmount `
+        -Sequence 1 `
         -OccurredAt $eventBaseTime.AddSeconds(10)
 
     Wait-ForBillingStatus `
@@ -336,7 +330,7 @@ try {
         -ExpectedStatus "COMPLETED"
     Wait-ForReservationState `
         -ReservationId $duplicateReservationId `
-        -ExpectedState "CONFIRMED|1000|900|1"
+        -ExpectedState "CONFIRMED|1000|900|1|1"
 
     $duplicateMetricBefore = Get-WorkerBillingMetricCount `
         -EventType "CHARGED" `
@@ -347,7 +341,8 @@ try {
             -ReservationId $duplicateReservationId `
             -EventId $duplicateChargeEventId `
             -EventType "CHARGED" `
-            -ActualAmount $duplicateChargeAmount `
+            -TargetAppliedAmount $duplicateChargeAmount `
+            -Sequence 1 `
             -OccurredAt $eventBaseTime.AddSeconds(10)
     }
 
@@ -376,7 +371,7 @@ try {
         -Actual $duplicateEventRows `
         -Message "동일 eventId가 PostgreSQL에 중복 저장됐습니다."
     Assert-Equal `
-        -Expected "CONFIRMED|1000|900|1" `
+        -Expected "CONFIRMED|1000|900|1|1" `
         -Actual (
             Get-ReservationState `
                 -ReservationId $duplicateReservationId
@@ -389,7 +384,8 @@ try {
         -ReservationId $outOfOrderReservationId `
         -EventId $outOfOrderAdjustEventId `
         -EventType "ADJUSTED" `
-        -ActualAmount $outOfOrderAdjustedAmount `
+        -TargetAppliedAmount $outOfOrderAdjustedAmount `
+        -Sequence 2 `
         -OccurredAt $eventBaseTime.AddSeconds(30)
 
     Wait-ForBillingStatus `
@@ -400,7 +396,8 @@ try {
         -ReservationId $outOfOrderReservationId `
         -EventId $outOfOrderChargeEventId `
         -EventType "CHARGED" `
-        -ActualAmount $outOfOrderChargeAmount `
+        -TargetAppliedAmount $outOfOrderChargeAmount `
+        -Sequence 1 `
         -OccurredAt $eventBaseTime.AddSeconds(20)
 
     Wait-ForBillingStatus `
@@ -411,62 +408,69 @@ try {
         -ExpectedStatus "COMPLETED"
     Wait-ForReservationState `
         -ReservationId $outOfOrderReservationId `
-        -ExpectedState "CONFIRMED|1000|1200|2"
+        -ExpectedState "CONFIRMED|1000|1200|2|2"
 
-    Write-Step "5. 늦게 도착한 과거 이벤트 무시 검증"
+    Write-Step "5. 부분 취소와 전체 취소 후 재보정 검증"
 
     Publish-BillingEvent `
-        -ReservationId $staleReservationId `
-        -EventId $staleChargeEventId `
+        -ReservationId $reconciliationReservationId `
+        -EventId $reconciliationChargeEventId `
         -EventType "CHARGED" `
-        -ActualAmount $staleChargeAmount `
+        -TargetAppliedAmount $reconciliationChargeAmount `
+        -Sequence 1 `
         -OccurredAt $eventBaseTime.AddSeconds(50)
 
     Wait-ForBillingStatus `
-        -EventId $staleChargeEventId `
+        -EventId $reconciliationChargeEventId `
         -ExpectedStatus "COMPLETED"
     Wait-ForReservationState `
-        -ReservationId $staleReservationId `
-        -ExpectedState "CONFIRMED|1000|700|1"
-
-    $staleMetricBefore = Get-WorkerBillingMetricCount `
-        -EventType "ADJUSTED" `
-        -Status "STALE"
+        -ReservationId $reconciliationReservationId `
+        -ExpectedState "CONFIRMED|1000|700|1|1"
 
     Publish-BillingEvent `
-        -ReservationId $staleReservationId `
-        -EventId $staleAdjustEventId `
-        -EventType "ADJUSTED" `
-        -ActualAmount $staleAdjustedAmount `
-        -OccurredAt $eventBaseTime.AddSeconds(40)
+        -ReservationId $reconciliationReservationId `
+        -EventId $reconciliationPartialCancelEventId `
+        -EventType "CANCELLED" `
+        -TargetAppliedAmount $reconciliationPartialCancelAmount `
+        -Sequence 2 `
+        -OccurredAt $eventBaseTime.AddSeconds(50)
 
     Wait-ForBillingStatus `
-        -EventId $staleAdjustEventId `
+        -EventId $reconciliationPartialCancelEventId `
         -ExpectedStatus "COMPLETED"
+    Wait-ForReservationState `
+        -ReservationId $reconciliationReservationId `
+        -ExpectedState "CONFIRMED|1000|400|2|2"
 
-    Wait-Until `
-        -TimeoutSeconds $TimeoutSeconds `
-        -IntervalMilliseconds 200 `
-        -FailureMessage "지연 이벤트가 STALE로 처리되지 않았습니다." `
-        -Condition {
-            $current = Get-WorkerBillingMetricCount `
-                -EventType "ADJUSTED" `
-                -Status "STALE"
-            return ($current - $staleMetricBefore) -ge 1
-        }
+    Publish-BillingEvent `
+        -ReservationId $reconciliationReservationId `
+        -EventId $reconciliationFullCancelEventId `
+        -EventType "CANCELLED" `
+        -TargetAppliedAmount 0 `
+        -Sequence 3 `
+        -OccurredAt $eventBaseTime.AddSeconds(50)
 
-    Assert-Equal `
-        -Expected "COMPLETED|CONFIRMED|700|1" `
-        -Actual (
-            Get-BillingResultState -EventId $staleAdjustEventId
-        ) `
-        -Message "STALE 이벤트 결과가 현재 예약 상태를 보존하지 못했습니다."
-    Assert-Equal `
-        -Expected "CONFIRMED|1000|700|1" `
-        -Actual (
-            Get-ReservationState -ReservationId $staleReservationId
-        ) `
-        -Message "과거 이벤트가 최신 예약 상태를 덮어썼습니다."
+    Wait-ForBillingStatus `
+        -EventId $reconciliationFullCancelEventId `
+        -ExpectedStatus "COMPLETED"
+    Wait-ForReservationState `
+        -ReservationId $reconciliationReservationId `
+        -ExpectedState "CANCELLED|1000|0|3|3"
+
+    Publish-BillingEvent `
+        -ReservationId $reconciliationReservationId `
+        -EventId $reconciliationReopenEventId `
+        -EventType "ADJUSTED" `
+        -TargetAppliedAmount $reconciliationReopenAmount `
+        -Sequence 4 `
+        -OccurredAt $eventBaseTime.AddSeconds(50)
+
+    Wait-ForBillingStatus `
+        -EventId $reconciliationReopenEventId `
+        -ExpectedStatus "COMPLETED"
+    Wait-ForReservationState `
+        -ReservationId $reconciliationReservationId `
+        -ExpectedState "CONFIRMED|1000|300|4|4"
 
     Write-Step "6. CHARGED → ADJUSTED → CANCELLED 상태 전이 검증"
 
@@ -474,7 +478,8 @@ try {
         -ReservationId $lifecycleReservationId `
         -EventId $lifecycleChargeEventId `
         -EventType "CHARGED" `
-        -ActualAmount $reservationAmount `
+        -TargetAppliedAmount $reservationAmount `
+        -Sequence 1 `
         -OccurredAt $eventBaseTime.AddSeconds(60)
 
     Wait-ForBillingStatus `
@@ -482,13 +487,14 @@ try {
         -ExpectedStatus "COMPLETED"
     Wait-ForReservationState `
         -ReservationId $lifecycleReservationId `
-        -ExpectedState "CONFIRMED|1000|1000|1"
+        -ExpectedState "CONFIRMED|1000|1000|1|1"
 
     Publish-BillingEvent `
         -ReservationId $lifecycleReservationId `
         -EventId $lifecycleAdjustEventId `
         -EventType "ADJUSTED" `
-        -ActualAmount $lifecycleAdjustedAmount `
+        -TargetAppliedAmount $lifecycleAdjustedAmount `
+        -Sequence 2 `
         -OccurredAt $eventBaseTime.AddSeconds(70)
 
     Wait-ForBillingStatus `
@@ -496,13 +502,14 @@ try {
         -ExpectedStatus "COMPLETED"
     Wait-ForReservationState `
         -ReservationId $lifecycleReservationId `
-        -ExpectedState "CONFIRMED|1000|1100|2"
+        -ExpectedState "CONFIRMED|1000|1100|2|2"
 
     Publish-BillingEvent `
         -ReservationId $lifecycleReservationId `
         -EventId $lifecycleCancelEventId `
         -EventType "CANCELLED" `
-        -ActualAmount $lifecycleAdjustedAmount `
+        -TargetAppliedAmount 0 `
+        -Sequence 3 `
         -OccurredAt $eventBaseTime.AddSeconds(80)
 
     Wait-ForBillingStatus `
@@ -510,7 +517,7 @@ try {
         -ExpectedStatus "COMPLETED"
     Wait-ForReservationState `
         -ReservationId $lifecycleReservationId `
-        -ExpectedState "CANCELLED|1000|0|3"
+        -ExpectedState "CANCELLED|1000|0|3|3"
 
     Write-Step "7. PostgreSQL 및 Redis 최종 정합성 검증"
 
@@ -561,11 +568,11 @@ try {
     )
 
     Assert-Equal `
-        -Expected "8" `
+        -Expected "10" `
         -Actual $billingEventCount `
-        -Message "고유 과금 이벤트 저장 건수가 8건이 아닙니다."
+        -Message "고유 과금 이벤트 저장 건수가 10건이 아닙니다."
     Assert-Equal `
-        -Expected "8" `
+        -Expected "10" `
         -Actual $completedBillingEventCount `
         -Message "모든 고유 과금 이벤트가 완료되지 않았습니다."
     Assert-Equal `
@@ -577,13 +584,14 @@ try {
     Write-Host "Billing Event Consistency Test SUCCESS" `
         -ForegroundColor Green
     Write-Host "campaignId:              $campaignId"
-    Write-Host "unique billing events:   8"
+    Write-Host "unique billing events:   10"
     Write-Host "duplicate redeliveries:  $duplicateDeliveryCount"
     Write-Host "final spent amount:      $expectedFinalSpend"
     Write-Host "verified:"
     Write-Host "  - 동일 eventId 중복 반영 방지"
     Write-Host "  - ADJUSTED 선도착 후 재시도 처리"
-    Write-Host "  - 늦게 도착한 과거 이벤트의 STALE 처리"
+    Write-Host "  - 부분 취소와 전체 취소 후 재보정"
+    Write-Host "  - occurredAt이 같아도 sequence 순서로 처리"
     Write-Host "  - CHARGED/ADJUSTED/CANCELLED 최종 정합성"
 }
 catch {

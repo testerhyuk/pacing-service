@@ -318,7 +318,7 @@ function Publish-BillingEvent {
         [string]$EventId,
 
         [Parameter(Mandatory = $true)]
-        [long]$ActualAmount,
+        [long]$TargetAppliedAmount,
 
         [Parameter(Mandatory = $true)]
         [DateTimeOffset]$OccurredAt
@@ -330,7 +330,8 @@ function Publish-BillingEvent {
         -ReservationId $ReservationId `
         -EventId $EventId `
         -EventType "CHARGED" `
-        -ActualAmount $ActualAmount `
+        -TargetAppliedAmount $TargetAppliedAmount `
+        -Sequence 1 `
         -OccurredAt $OccurredAt `
         -PassThru `
         -EnvironmentFile $EnvironmentFile)
@@ -429,7 +430,7 @@ try {
     Publish-BillingEvent `
         -ReservationId $confirmedReservationId `
         -EventId $initialChargeEventId `
-        -ActualAmount $initialChargeAmount `
+        -TargetAppliedAmount $initialChargeAmount `
         -OccurredAt ([DateTimeOffset]::UtcNow)
 
     Wait-ForBillingStatus `
@@ -591,7 +592,7 @@ try {
     Publish-BillingEvent `
         -ReservationId $pendingReservationId `
         -EventId $outageChargeEventId `
-        -ActualAmount $outageChargeAmount `
+        -TargetAppliedAmount $outageChargeAmount `
         -OccurredAt ([DateTimeOffset]::UtcNow)
 
     Wait-ForBillingStatus `

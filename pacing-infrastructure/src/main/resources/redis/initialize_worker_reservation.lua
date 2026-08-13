@@ -13,7 +13,8 @@ if redis.call('EXISTS', reservationKey) == 0 then
         'status', ARGV[6],
         'reservedAtEpochMillis', ARGV[7],
         'expiresAtEpochMillis', ARGV[8],
-        'version', ARGV[9]
+        'version', ARGV[9],
+        'lastBillingSequence', ARGV[10]
     )
 
     if ARGV[6] == 'RESERVED' then
@@ -25,7 +26,7 @@ if redis.call('EXISTS', reservationKey) == 0 then
         )
     else
         redis.call('ZREM', expiryKey, ARGV[1])
-        redis.call('PEXPIRE', reservationKey, ARGV[10])
+        redis.call('PEXPIRE', reservationKey, ARGV[11])
     end
 
     return {'CREATED'}
@@ -37,9 +38,16 @@ local currentStatus = redis.call(
     'status'
 )
 
+redis.call(
+    'HSETNX',
+    reservationKey,
+    'lastBillingSequence',
+    ARGV[10]
+)
+
 if currentStatus and currentStatus ~= 'RESERVED'
         and redis.call('PTTL', reservationKey) < 0 then
-    redis.call('PEXPIRE', reservationKey, ARGV[10])
+    redis.call('PEXPIRE', reservationKey, ARGV[11])
 end
 
 return {'EXISTS'}

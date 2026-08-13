@@ -21,6 +21,7 @@ class BillingEventMessageTest {
                 "reservation-1",
                 BillingEventType.CHARGED,
                 900L,
+                1L,
                 occurredAt
         );
 
@@ -31,8 +32,9 @@ class BillingEventMessageTest {
                 .isEqualTo("reservation-1");
         assertThat(event.eventType())
                 .isEqualTo(BillingEventType.CHARGED);
-        assertThat(event.actualAmount())
+        assertThat(event.targetAppliedAmount())
                 .isEqualTo(new Money(900L));
+        assertThat(event.sequence()).isEqualTo(1L);
         assertThat(event.occurredAt())
                 .isEqualTo(
                         Instant.parse(
@@ -48,6 +50,7 @@ class BillingEventMessageTest {
                 "reservation-1",
                 BillingEventType.CHARGED,
                 0L,
+                1L,
                 Instant.parse("2026-07-26T01:02:03Z")
         ).toDomain())
                 .isInstanceOf(IllegalArgumentException.class);
@@ -57,6 +60,7 @@ class BillingEventMessageTest {
                 "reservation-1",
                 BillingEventType.CHARGED,
                 100L,
+                1L,
                 null
         ).toDomain())
                 .isInstanceOf(IllegalArgumentException.class);

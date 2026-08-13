@@ -184,8 +184,8 @@ public record BudgetState(
             Money currentAmount,
             Money adjustedAmount
     ) {
-        validatePositiveAmount(currentAmount);
-        validatePositiveAmount(adjustedAmount);
+        validateAmount(currentAmount);
+        validateAmount(adjustedAmount);
 
         if (currentAmount.equals(adjustedAmount)) {
             return this;
@@ -200,6 +200,14 @@ public record BudgetState(
         return subtractSpent(
                 currentAmount.subtract(adjustedAmount)
         );
+    }
+
+    private void validateAmount(Money amount) {
+        if (amount == null) {
+            throw new IllegalArgumentException(
+                    "처리할 금액은 null일 수 없습니다"
+            );
+        }
     }
 
     private void validatePositiveAmount(Money amount) {

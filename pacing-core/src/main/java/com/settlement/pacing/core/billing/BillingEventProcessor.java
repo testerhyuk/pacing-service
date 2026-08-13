@@ -68,12 +68,12 @@ public class BillingEventProcessor {
         if (reservation.status() == ReservationStatus.RESERVED) {
             nextBudgetState = budgetState.confirm(
                     reservation.amount(),
-                    event.actualAmount()
+                    event.targetAppliedAmount()
             );
         } else {
             // EXPIRED 예약은 예약액이 이미 해제됐으므로 소진액만 증가시킨다.
             nextBudgetState = budgetState.addSpent(
-                    event.actualAmount()
+                    event.targetAppliedAmount()
             );
         }
 
@@ -83,7 +83,7 @@ public class BillingEventProcessor {
         return new BillingResult(
                 nextBudgetState,
                 nextReservation,
-                event.actualAmount()
+                event.targetAppliedAmount()
         );
     }
 
@@ -93,41 +93,60 @@ public class BillingEventProcessor {
             BillingEvent event,
             Money appliedAmount
     ) {
-        if (reservation.status() == ReservationStatus.CANCELLED) {
-            return new BillingResult(
-                    budgetState,
-                    reservation,
-                    Money.zero()
-            );
-        }
-
         BudgetState nextBudgetState =
                 switch (reservation.status()) {
-                    case RESERVED ->
-                            budgetState.release(
-                                    reservation.amount()
-                            );
-
-                    case CONFIRMED -> {
-                        if (!event.actualAmount().equals(appliedAmount)) {
+                    case RESERVED -> {
+                        if (!event.targetAppliedAmount().isZero()) {
                             throw new IllegalArgumentException(
-                                    "취소 금액은 현재 적용된 과금액과 일치해야 합니다"
+                                    "확정 전 예약 취소 후 적용 금액은 0이어야 합니다"
                             );
                         }
 
-                        yield budgetState.subtractSpent(
-                                appliedAmount
+                        yield budgetState.release(
+                                reservation.amount()
                         );
                     }
 
-                    case EXPIRED -> budgetState;
-                    case CANCELLED -> budgetState;
+                    case CONFIRMED -> {
+                        if (appliedAmount.isLessThan(
+                                event.targetAppliedAmount()
+                        )) {
+                            throw new IllegalArgumentException(
+                                    "취소 후 적용 금액은 현재 적용 금액보다 클 수 없습니다"
+                            );
+                        }
+
+                        yield budgetState.adjustSpent(
+                                appliedAmount,
+                                event.targetAppliedAmount()
+                        );
+                    }
+
+                    case EXPIRED -> {
+                        if (!event.targetAppliedAmount().isZero()) {
+                            throw new IllegalArgumentException(
+                                    "만료 예약 취소 후 적용 금액은 0이어야 합니다"
+                            );
+                        }
+                        yield budgetState;
+                    }
+
+                    case CANCELLED -> {
+                        if (!event.targetAppliedAmount().isZero()) {
+                            throw new IllegalArgumentException(
+                                    "취소 이벤트는 취소된 과금액을 증가시킬 수 없습니다"
+                            );
+                        }
+                        yield budgetState;
+                    }
                 };
 
         return new BillingResult(
                 nextBudgetState,
-                reservation.cancel(),
-                Money.zero()
+                reservation.reconcileAppliedAmount(
+                        event.targetAppliedAmount()
+                ),
+                event.targetAppliedAmount()
         );
     }
 
@@ -137,22 +156,25 @@ public class BillingEventProcessor {
             BillingEvent event,
             Money appliedAmount
     ) {
-        if (reservation.status() != ReservationStatus.CONFIRMED) {
+        if (reservation.status() != ReservationStatus.CONFIRMED
+                && reservation.status() != ReservationStatus.CANCELLED) {
             throw new IllegalStateException(
-                    "확정된 예약만 과금액을 보정할 수 있습니다"
+                    "확정 또는 취소된 예약만 과금액을 보정할 수 있습니다"
             );
         }
 
         BudgetState nextBudgetState =
                 budgetState.adjustSpent(
                         appliedAmount,
-                        event.actualAmount()
+                        event.targetAppliedAmount()
                 );
 
         return new BillingResult(
                 nextBudgetState,
-                reservation,
-                event.actualAmount()
+                reservation.reconcileAppliedAmount(
+                        event.targetAppliedAmount()
+                ),
+                event.targetAppliedAmount()
         );
     }
 

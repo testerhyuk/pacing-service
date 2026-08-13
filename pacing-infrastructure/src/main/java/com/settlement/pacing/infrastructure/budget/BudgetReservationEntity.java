@@ -43,6 +43,9 @@ public class BudgetReservationEntity {
     @Column(name = "version", nullable = false)
     private long version;
 
+    @Column(name = "last_billing_sequence", nullable = false)
+    private long lastBillingSequence;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
@@ -86,6 +89,10 @@ public class BudgetReservationEntity {
 
     public long getVersion() {
         return version;
+    }
+
+    public long getLastBillingSequence() {
+        return lastBillingSequence;
     }
 
     public Instant getCreatedAt() {

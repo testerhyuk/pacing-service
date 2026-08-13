@@ -78,6 +78,7 @@ public class RedisWorkerStateStore {
                         entity.getExpiresAt().toEpochMilli()
                 ),
                 Long.toString(entity.getVersion()),
+                Long.toString(entity.getLastBillingSequence()),
                 Long.toString(
                         properties.terminalReservationTtl()
                                 .toMillis()
@@ -161,7 +162,11 @@ public class RedisWorkerStateStore {
                             values,
                             "appliedAmount"
                     )),
-                    parseNonNegativeLong(values, "version")
+                    parseNonNegativeLong(values, "version"),
+                    parseNonNegativeLong(
+                            values,
+                            "lastBillingSequence"
+                    )
             );
         } catch (NonRetryableBillingEventException exception) {
             throw exception;
@@ -225,6 +230,10 @@ public class RedisWorkerStateStore {
                     parseNonNegativeLong(
                             values,
                             "reservationVersion"
+                    ),
+                    parseNonNegativeLong(
+                            values,
+                            "lastBillingSequence"
                     ),
                     new Money(parseNonNegativeLong(
                             values,
@@ -338,29 +347,37 @@ public class RedisWorkerStateStore {
                 Long.toString(currentReservation.version()),
 
                 // 11
-                Long.toString(totalSpentDelta),
+                Long.toString(
+                        currentReservation.lastBillingSequence()
+                ),
 
                 // 12
-                Long.toString(totalReservedDelta),
+                Long.toString(event.sequence()),
 
                 // 13
-                Long.toString(dailySpentDelta),
+                Long.toString(totalSpentDelta),
 
                 // 14
-                Long.toString(dailyReservedDelta),
+                Long.toString(totalReservedDelta),
 
                 // 15
-                result.reservation().status().name(),
+                Long.toString(dailySpentDelta),
 
                 // 16
-                amount(result.appliedAmount()),
+                Long.toString(dailyReservedDelta),
 
                 // 17
+                result.reservation().status().name(),
+
+                // 18
+                amount(result.appliedAmount()),
+
+                // 19
                 Long.toString(
                         properties.processedEventTtl().toMillis()
                 ),
 
-                // 18
+                // 20
                 Long.toString(
                         properties.terminalReservationTtl()
                                 .toMillis()
@@ -511,15 +528,22 @@ public class RedisWorkerStateStore {
             );
         }
 
+        if ("SEQUENCE_GAP".equals(status)) {
+            throw new RetryableBillingEventException(
+                    "선행 과금 이벤트가 아직 처리되지 않았습니다"
+            );
+        }
+
         if (!"APPLIED".equals(status)
-                && !"ALREADY_APPLIED".equals(status)) {
+                && !"ALREADY_APPLIED".equals(status)
+                && !"STALE".equals(status)) {
             throw new NonRetryableBillingEventException(
                     "알 수 없는 Redis 과금 이벤트 처리 결과입니다: "
                             + status
             );
         }
 
-        if (raw.size() != 8) {
+        if (raw.size() != 9) {
             throw new NonRetryableBillingEventException(
                     "Redis 과금 이벤트 처리 결과 필드 수가 올바르지 않습니다"
             );
@@ -534,8 +558,9 @@ public class RedisWorkerStateStore {
                     ReservationStatus.valueOf(value(raw, 3)),
                     new Money(parseNonNegativeLong(value(raw, 4))),
                     parseNonNegativeLong(value(raw, 5)),
-                    new Money(parseNonNegativeLong(value(raw, 6))),
-                    new Money(parseNonNegativeLong(value(raw, 7)))
+                    parseNonNegativeLong(value(raw, 6)),
+                    new Money(parseNonNegativeLong(value(raw, 7))),
+                    new Money(parseNonNegativeLong(value(raw, 8)))
             );
         } catch (IllegalArgumentException exception) {
             throw new NonRetryableBillingEventException(

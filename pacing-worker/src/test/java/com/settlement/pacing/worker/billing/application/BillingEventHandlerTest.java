@@ -78,6 +78,7 @@ class BillingEventHandlerTest {
                 "reservation-1",
                 BillingEventType.CHARGED,
                 new Money(900L),
+                1L,
                 Instant.parse("2026-07-26T01:00:00Z")
         );
     }
