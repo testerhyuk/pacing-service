@@ -110,7 +110,8 @@ class PacingWorkerPropertiesTest {
         return new PacingWorkerProperties.Reconciliation(
                 "0 10 0 * * *",
                 ZoneId.of("Asia/Seoul"),
-                100
+                100,
+                3
         );
     }
 }

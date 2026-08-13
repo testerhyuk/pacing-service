@@ -16,6 +16,7 @@ import com.settlement.pacing.core.pacing.PeakTimeWindow;
 import com.settlement.pacing.core.pacing.Rate;
 import com.settlement.pacing.core.pacing.TrafficWeight;
 import com.settlement.pacing.infrastructure.campaign.CampaignJpaRepository;
+import com.settlement.pacing.infrastructure.budget.RedisBudgetStateStore;
 import com.settlement.pacing.infrastructure.common.RedisKeyFactory;
 import com.settlement.pacing.infrastructure.pacing.PacingStateSnapshotJpaRepository;
 import org.junit.jupiter.api.Test;
@@ -156,6 +157,9 @@ class InfrastructureIntegrationTest {
 
     @Autowired
     private RedisKeyFactory keyFactory;
+
+    @Autowired
+    private RedisBudgetStateStore budgetStateStore;
 
     @Autowired
     private Clock clock;
@@ -1031,6 +1035,103 @@ class InfrastructureIntegrationTest {
         } finally {
             executorService.shutdownNow();
         }
+    }
+
+    @Test
+    void 동일한_예산_버전이면_Redis_상태를_원자적으로_보정한다() {
+        String campaignId = "budget-repair-matching-version";
+        BudgetState initial = new BudgetState(
+                campaignId,
+                BUDGET_DATE,
+                new Money(1_000L),
+                new Money(100L),
+                new Money(50L),
+                new Money(500L),
+                new Money(80L),
+                new Money(20L)
+        );
+        budgetStateStore.initializeIfAbsent(initial);
+
+        RedisBudgetStateStore.ReadResult observed =
+                budgetStateStore.read(campaignId, BUDGET_DATE);
+        BudgetState repaired = new BudgetState(
+                campaignId,
+                BUDGET_DATE,
+                initial.totalBudget(),
+                new Money(120L),
+                new Money(40L),
+                initial.dailyBudgetLimit(),
+                new Money(90L),
+                new Money(10L)
+        );
+
+        RedisBudgetStateStore.RepairResult result =
+                budgetStateStore.repairIfVersionMatches(
+                        repaired,
+                        observed.totalVersion(),
+                        observed.dailyVersion()
+                );
+
+        assertThat(result.status()).isEqualTo(
+                RedisBudgetStateStore.RepairStatus.UPDATED
+        );
+        assertThat(result.totalVersion())
+                .isEqualTo(observed.totalVersion() + 1L);
+        assertThat(result.dailyVersion())
+                .isEqualTo(observed.dailyVersion() + 1L);
+
+        RedisBudgetStateStore.ReadResult stored =
+                budgetStateStore.read(campaignId, BUDGET_DATE);
+        assertThat(stored.budgetState()).isEqualTo(repaired);
+    }
+
+    @Test
+    void 예산_버전이_바뀌면_대사_결과로_Redis를_덮어쓰지_않는다() {
+        String campaignId = "budget-repair-stale-version";
+        BudgetState initial = new BudgetState(
+                campaignId,
+                BUDGET_DATE,
+                new Money(1_000L),
+                new Money(100L),
+                new Money(50L),
+                new Money(500L),
+                new Money(80L),
+                new Money(20L)
+        );
+        budgetStateStore.initializeIfAbsent(initial);
+
+        RedisBudgetStateStore.ReadResult observed =
+                budgetStateStore.read(campaignId, BUDGET_DATE);
+        redisTemplate.opsForHash().increment(
+                keyFactory.totalBudget(campaignId),
+                "version",
+                1L
+        );
+
+        BudgetState staleRepair = new BudgetState(
+                campaignId,
+                BUDGET_DATE,
+                initial.totalBudget(),
+                new Money(200L),
+                new Money(100L),
+                initial.dailyBudgetLimit(),
+                new Money(150L),
+                new Money(50L)
+        );
+
+        RedisBudgetStateStore.RepairResult result =
+                budgetStateStore.repairIfVersionMatches(
+                        staleRepair,
+                        observed.totalVersion(),
+                        observed.dailyVersion()
+                );
+
+        assertThat(result.status()).isEqualTo(
+                RedisBudgetStateStore.RepairStatus.VERSION_MISMATCH
+        );
+        RedisBudgetStateStore.ReadResult stored =
+                budgetStateStore.read(campaignId, BUDGET_DATE);
+        assertThat(stored.budgetState()).isEqualTo(initial);
     }
 
     private void insertCampaign(

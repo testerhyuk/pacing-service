@@ -111,14 +111,17 @@ public class PacingWorkerInfrastructureAutoConfiguration {
             @Qualifier("initializeBudgetStateScript")
             RedisScript<Long> initializeBudgetStateScript,
             @Qualifier("updateBudgetLimitsScript")
-            RedisScript<List> updateBudgetLimitsScript
+            RedisScript<List> updateBudgetLimitsScript,
+            @Qualifier("repairBudgetStateScript")
+            RedisScript<List> repairBudgetStateScript
     ) {
         return new RedisBudgetStateStore(
                 redisTemplate,
                 keyFactory,
                 readBudgetStateScript,
                 initializeBudgetStateScript,
-                updateBudgetLimitsScript
+                updateBudgetLimitsScript,
+                repairBudgetStateScript
         );
     }
 
@@ -270,14 +273,16 @@ public class PacingWorkerInfrastructureAutoConfiguration {
             RedisBudgetStateStore budgetStateStore,
             BudgetStateRecoveryService recoveryService,
             BudgetReconciliationRepository repository,
-            Clock clock
+            Clock clock,
+            PacingWorkerProperties properties
     ) {
         return new BudgetReconciliationAdapter(
                 queryRepository,
                 budgetStateStore,
                 recoveryService,
                 repository,
-                clock
+                clock,
+                properties.reconciliation().maxRepairAttempts()
         );
     }
 }

@@ -5,6 +5,8 @@ public record BudgetReconciliationResult(
         int matched,
         int mismatched,
         int unavailable,
-        long mismatchAmount
+        long mismatchAmount,
+        int repaired,
+        int versionConflicts
 ) {
 }

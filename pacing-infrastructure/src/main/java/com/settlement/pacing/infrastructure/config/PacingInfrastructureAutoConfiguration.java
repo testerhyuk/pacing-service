@@ -145,14 +145,17 @@ public class PacingInfrastructureAutoConfiguration {
             @Qualifier("initializeBudgetStateScript")
             RedisScript<Long> initializeBudgetStateScript,
             @Qualifier("updateBudgetLimitsScript")
-            RedisScript<List> updateBudgetLimitsScript
+            RedisScript<List> updateBudgetLimitsScript,
+            @Qualifier("repairBudgetStateScript")
+            RedisScript<List> repairBudgetStateScript
     ) {
         return new RedisBudgetStateStore(
                 redisTemplate,
                 keyFactory,
                 readBudgetStateScript,
                 initializeBudgetStateScript,
-                updateBudgetLimitsScript
+                updateBudgetLimitsScript,
+                repairBudgetStateScript
         );
     }
 
