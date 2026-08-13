@@ -11,6 +11,7 @@ import com.settlement.pacing.infrastructure.budget.BudgetReservationEntity;
 import com.settlement.pacing.infrastructure.budget.RedisBudgetStateStore;
 import com.settlement.pacing.infrastructure.common.RedisKeyFactory;
 import com.settlement.pacing.infrastructure.worker.BillingEventPersistenceService;
+import com.settlement.pacing.infrastructure.worker.ExpirationClaimRepository;
 import com.settlement.pacing.infrastructure.worker.RedisBillingTransition;
 import com.settlement.pacing.infrastructure.worker.RedisReservationSnapshot;
 import com.settlement.pacing.infrastructure.worker.RedisWorkerStateStore;
@@ -20,11 +21,16 @@ import com.settlement.pacing.worker.billing.application.BillingEventProcessingSt
 import com.settlement.pacing.worker.billing.message.BillingEventMessage;
 import com.settlement.pacing.worker.expiration.application.ExpirationBatchResult;
 import com.settlement.pacing.worker.expiration.application.ExpiredReservationGateway;
+import com.settlement.pacing.worker.reconciliation.application.BudgetReconciliationLockGateway;
+import com.settlement.pacing.worker.reconciliation.application.ReservationRepairGateway;
+import com.settlement.pacing.worker.reconciliation.application.ReservationRepairResult;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.AfterEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.GenericContainer;
@@ -38,6 +44,15 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
@@ -70,7 +85,12 @@ import static org.awaitility.Awaitility.await;
                 "pacing.worker.kafka.max-backoff-millis=500",
                 "pacing.worker.expiration.enabled=false",
                 "pacing.worker.expiration.fixed-delay=1h",
-                "pacing.worker.expiration.batch-size=100"
+                "pacing.worker.expiration.claim-ttl=1m",
+                "pacing.worker.expiration.batch-size=100",
+                "pacing.worker.reservation-repair.enabled=false",
+                "pacing.worker.reservation-repair.claim-ttl=1m",
+                "pacing.worker.reconciliation.enabled=false",
+                "pacing.worker.reconciliation.lock-ttl=2h"
         }
 )
 class WorkerIntegrationTest {
@@ -136,6 +156,15 @@ class WorkerIntegrationTest {
     private ExpiredReservationGateway expirationGateway;
 
     @Autowired
+    private ReservationRepairGateway reservationRepairGateway;
+
+    @Autowired
+    private BudgetReconciliationLockGateway reconciliationLockGateway;
+
+    @Autowired
+    private ExpirationClaimRepository expirationClaimRepository;
+
+    @Autowired
     private RedisBudgetStateStore budgetStateStore;
 
     @Autowired
@@ -154,7 +183,20 @@ class WorkerIntegrationTest {
     private JdbcClient jdbcClient;
 
     @Autowired
+    private StringRedisTemplate redisTemplate;
+
+    @Autowired
     private KafkaTemplate<Object, Object> kafkaTemplate;
+
+    @AfterEach
+    void clearExpirationClaimFixtures() {
+        jdbcClient.sql("""
+                        DELETE FROM budget_reservation
+                        WHERE reservation_id LIKE
+                              'reservation-expiration-%-claim%'
+                        """)
+                .update();
+    }
 
     @Test
     void 과금은_예약액을_소진액으로_원자적으로_전환하고_중복_반영하지_않는다()
@@ -599,6 +641,379 @@ class WorkerIntegrationTest {
                                     "Kafka 재시도 횟수를 초과했습니다"
                             );
                 });
+    }
+
+    @Test
+    void 여러_Worker가_같은_일일_대사_Lock을_동시에_획득할_수_없다()
+            throws Exception {
+        LocalDate budgetDate = LocalDate.of(2026, 8, 12);
+        int workerCount = 16;
+        ExecutorService executor =
+                Executors.newFixedThreadPool(workerCount);
+        CountDownLatch ready = new CountDownLatch(workerCount);
+        CountDownLatch start = new CountDownLatch(1);
+        List<Future<Optional<BudgetReconciliationLockGateway.LockHandle>>>
+                futures = new ArrayList<>();
+
+        try {
+            for (int index = 0; index < workerCount; index++) {
+                futures.add(executor.submit(() -> {
+                    ready.countDown();
+                    start.await(5, TimeUnit.SECONDS);
+                    return reconciliationLockGateway.tryAcquire(
+                            budgetDate,
+                            Duration.ofMinutes(1)
+                    );
+                }));
+            }
+
+            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+
+            List<BudgetReconciliationLockGateway.LockHandle> acquired =
+                    new ArrayList<>();
+
+            for (Future<Optional<BudgetReconciliationLockGateway.LockHandle>> future
+                    : futures) {
+                future.get(5, TimeUnit.SECONDS)
+                        .ifPresent(acquired::add);
+            }
+
+            assertThat(acquired).hasSize(1);
+            reconciliationLockGateway.release(acquired.getFirst());
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void 여러_Worker가_같은_예약_복구_대상을_중복_처리하지_않는다()
+            throws Exception {
+        String campaignId = "campaign-repair-claim";
+        String reservationId = "reservation-repair-claim";
+        Instant now = Instant.now();
+        insertCampaign(campaignId, 10_000L);
+        seedRedisOnlyReservation(
+                campaignId,
+                reservationId,
+                500L,
+                now.minusSeconds(30),
+                now.plusSeconds(300)
+        );
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch start = new CountDownLatch(1);
+
+        try {
+            Future<ReservationRepairResult> first =
+                    executor.submit(() -> {
+                        start.await(5, TimeUnit.SECONDS);
+                        return reservationRepairGateway.repair(1, now);
+                    });
+            Future<ReservationRepairResult> second =
+                    executor.submit(() -> {
+                        start.await(5, TimeUnit.SECONDS);
+                        return reservationRepairGateway.repair(1, now);
+                    });
+
+            start.countDown();
+
+            ReservationRepairResult firstResult =
+                    first.get(5, TimeUnit.SECONDS);
+            ReservationRepairResult secondResult =
+                    second.get(5, TimeUnit.SECONDS);
+
+            assertThat(firstResult.scanned() + secondResult.scanned())
+                    .isEqualTo(1);
+            assertThat(firstResult.repaired() + secondResult.repaired())
+                    .isEqualTo(1);
+            assertThat(reservationCount(reservationId)).isEqualTo(1L);
+            assertThat(redisTemplate.opsForZSet().size(
+                    keyFactory.reservationPersistencePending()
+            )).isZero();
+            assertThat(redisTemplate.opsForZSet().size(
+                    keyFactory.reservationPersistenceProcessing()
+            )).isZero();
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void 여러_Worker는_만료_예약을_PostgreSQL에서_서로_다르게_선점한다()
+            throws Exception {
+        Instant now = Instant.now();
+        seedReserved(
+                "campaign-expiration-claim-1",
+                "reservation-expiration-claim-1",
+                100L,
+                10_000L,
+                now.minusSeconds(300),
+                now.minusSeconds(10)
+        );
+        seedReserved(
+                "campaign-expiration-claim-2",
+                "reservation-expiration-claim-2",
+                100L,
+                10_000L,
+                now.minusSeconds(300),
+                now.minusSeconds(10)
+        );
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch start = new CountDownLatch(1);
+
+        try {
+            Future<List<String>> first = executor.submit(() -> {
+                start.await(5, TimeUnit.SECONDS);
+                return expirationClaimRepository.claim(
+                        now,
+                        1,
+                        "expiration-token-1",
+                        now.plusSeconds(60)
+                );
+            });
+            Future<List<String>> second = executor.submit(() -> {
+                start.await(5, TimeUnit.SECONDS);
+                return expirationClaimRepository.claim(
+                        now,
+                        1,
+                        "expiration-token-2",
+                        now.plusSeconds(60)
+                );
+            });
+
+            start.countDown();
+
+            List<String> firstClaims = first.get(5, TimeUnit.SECONDS);
+            List<String> secondClaims = second.get(5, TimeUnit.SECONDS);
+
+            assertThat(firstClaims).hasSize(1);
+            assertThat(secondClaims).hasSize(1);
+            assertThat(firstClaims.getFirst())
+                    .isNotEqualTo(secondClaims.getFirst());
+
+            expirationClaimRepository.release(
+                    firstClaims.getFirst(),
+                    "expiration-token-1"
+            );
+            expirationClaimRepository.release(
+                    secondClaims.getFirst(),
+                    "expiration-token-2"
+            );
+            deleteReservation(firstClaims.getFirst());
+            deleteReservation(secondClaims.getFirst());
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void 장애로_만료된_예약_복구_선점은_다른_Worker가_다시_처리한다() {
+        String campaignId = "campaign-repair-expired-claim";
+        String reservationId = "reservation-repair-expired-claim";
+        Instant now = Instant.now();
+        insertCampaign(campaignId, 10_000L);
+        seedRedisOnlyReservation(
+                campaignId,
+                reservationId,
+                500L,
+                now.minusSeconds(30),
+                now.plusSeconds(300)
+        );
+
+        String member = keyFactory.reservationPersistenceMember(
+                campaignId,
+                reservationId
+        );
+        redisTemplate.opsForZSet().remove(
+                keyFactory.reservationPersistencePending(),
+                member
+        );
+        redisTemplate.opsForZSet().add(
+                keyFactory.reservationPersistenceProcessing(),
+                "dead-worker-token|" + member,
+                now.minusSeconds(1).toEpochMilli()
+        );
+
+        ReservationRepairResult result =
+                reservationRepairGateway.repair(1, now);
+
+        assertThat(result.repaired()).isEqualTo(1);
+        assertThat(reservationCount(reservationId)).isEqualTo(1L);
+        assertThat(redisTemplate.opsForZSet().size(
+                keyFactory.reservationPersistenceProcessing()
+        )).isZero();
+    }
+
+    @Test
+    void 장애로_만료된_PostgreSQL_만료_선점은_다시_선점할_수_있다() {
+        Instant now = Instant.now();
+        String reservationId = "reservation-expiration-expired-claim";
+        seedReserved(
+                "campaign-expiration-expired-claim",
+                reservationId,
+                100L,
+                10_000L,
+                now.minusSeconds(300),
+                now.minusSeconds(10)
+        );
+
+        List<String> first = expirationClaimRepository.claim(
+                now,
+                1,
+                "dead-worker-token",
+                now.plusSeconds(10)
+        );
+        List<String> beforeLeaseExpiration =
+                expirationClaimRepository.claim(
+                        now.plusSeconds(5),
+                        1,
+                        "second-worker-token",
+                        now.plusSeconds(65)
+                );
+        List<String> afterLeaseExpiration =
+                expirationClaimRepository.claim(
+                        now.plusSeconds(11),
+                        1,
+                        "second-worker-token",
+                        now.plusSeconds(71)
+                );
+
+        assertThat(first).containsExactly(reservationId);
+        assertThat(beforeLeaseExpiration).isEmpty();
+        assertThat(afterLeaseExpiration).containsExactly(reservationId);
+
+        expirationClaimRepository.release(
+                reservationId,
+                "second-worker-token"
+        );
+        deleteReservation(reservationId);
+    }
+
+    @Test
+    void 예약_복구가_실패하면_processing에서_pending으로_돌아간다() {
+        String campaignId = "campaign-repair-failure";
+        String reservationId = "reservation-repair-failure";
+        String member = keyFactory.reservationPersistenceMember(
+                campaignId,
+                reservationId
+        );
+        Instant now = Instant.now();
+        String reservationKey = keyFactory.reservation(
+                campaignId,
+                reservationId
+        );
+
+        redisTemplate.opsForHash().putAll(
+                reservationKey,
+                Map.of(
+                        "reservationId", reservationId,
+                        "campaignId", campaignId
+                )
+        );
+        redisTemplate.opsForZSet().add(
+                keyFactory.reservationPersistencePending(),
+                member,
+                now.minusSeconds(10).toEpochMilli()
+        );
+        redisTemplate.opsForZSet().add(
+                keyFactory.campaignReservationPersistencePending(
+                        campaignId
+                ),
+                member,
+                now.minusSeconds(10).toEpochMilli()
+        );
+
+        try {
+            ReservationRepairResult result =
+                    reservationRepairGateway.repair(1, now);
+
+            assertThat(result.failed()).isEqualTo(1);
+            assertThat(redisTemplate.opsForZSet().score(
+                    keyFactory.reservationPersistencePending(),
+                    member
+            )).isNotNull();
+            assertThat(redisTemplate.opsForZSet().size(
+                    keyFactory.reservationPersistenceProcessing()
+            )).isZero();
+        } finally {
+            redisTemplate.delete(reservationKey);
+            redisTemplate.opsForZSet().remove(
+                    keyFactory.reservationPersistencePending(),
+                    member
+            );
+            redisTemplate.opsForZSet().remove(
+                    keyFactory.campaignReservationPersistencePending(
+                            campaignId
+                    ),
+                    member
+            );
+        }
+    }
+
+    private void seedRedisOnlyReservation(
+            String campaignId,
+            String reservationId,
+            long amount,
+            Instant reservedAt,
+            Instant expiresAt
+    ) {
+        String member = keyFactory.reservationPersistenceMember(
+                campaignId,
+                reservationId
+        );
+
+        redisTemplate.opsForHash().putAll(
+                keyFactory.reservation(campaignId, reservationId),
+                Map.of(
+                        "reservationId", reservationId,
+                        "campaignId", campaignId,
+                        "budgetDate", BUDGET_DATE.toString(),
+                        "amount", Long.toString(amount),
+                        "appliedAmount", "0",
+                        "status", "RESERVED",
+                        "reservedAtEpochMillis", Long.toString(
+                                reservedAt.toEpochMilli()
+                        ),
+                        "expiresAtEpochMillis", Long.toString(
+                                expiresAt.toEpochMilli()
+                        ),
+                        "version", "0"
+                )
+        );
+        redisTemplate.opsForZSet().add(
+                keyFactory.reservationPersistencePending(),
+                member,
+                reservedAt.toEpochMilli()
+        );
+        redisTemplate.opsForZSet().add(
+                keyFactory.campaignReservationPersistencePending(
+                        campaignId
+                ),
+                member,
+                reservedAt.toEpochMilli()
+        );
+    }
+
+    private long reservationCount(String reservationId) {
+        return jdbcClient.sql("""
+                        SELECT COUNT(*)
+                        FROM budget_reservation
+                        WHERE reservation_id = :reservationId
+                        """)
+                .param("reservationId", reservationId)
+                .query(Long.class)
+                .single();
+    }
+
+    private void deleteReservation(String reservationId) {
+        jdbcClient.sql("""
+                        DELETE FROM budget_reservation
+                        WHERE reservation_id = :reservationId
+                        """)
+                .param("reservationId", reservationId)
+                .update();
     }
 
     private void seedReserved(

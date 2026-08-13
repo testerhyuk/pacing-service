@@ -58,9 +58,11 @@ public record PacingWorkerProperties(
 
     public record Expiration(
             @NotNull Duration fixedDelay,
+            @NotNull Duration claimTtl,
             @Min(1) int batchSize
     ) {
         public Expiration {
+            validatePositive(claimTtl, "예약 만료 선점 TTL");
             validatePositive(fixedDelay, "예약 만료 실행 주기");
         }
     }
@@ -68,6 +70,7 @@ public record PacingWorkerProperties(
     public record ReservationRepair(
             @NotNull Duration fixedDelay,
             @NotNull Duration gracePeriod,
+            @NotNull Duration claimTtl,
             @Min(1) int batchSize
     ) {
         public ReservationRepair {
@@ -80,6 +83,11 @@ public record PacingWorkerProperties(
                     gracePeriod,
                     "예약 영속화 복구 유예 시간"
             );
+
+            validatePositive(
+                    claimTtl,
+                    "예약 영속화 복구 선점 TTL"
+            );
         }
     }
 
@@ -87,8 +95,12 @@ public record PacingWorkerProperties(
             @NotBlank String cron,
             @NotNull ZoneId zoneId,
             @Min(1) int batchSize,
-            @Min(1) int maxRepairAttempts
+            @Min(1) int maxRepairAttempts,
+            @NotNull Duration lockTtl
     ) {
+        public Reconciliation {
+            validatePositive(lockTtl, "일일 예산 대사 Lock TTL");
+        }
     }
 
     private static void validatePositive(

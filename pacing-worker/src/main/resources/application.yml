@@ -80,12 +80,14 @@ pacing:
 
     expiration:
       fixed-delay: ${PACING_WORKER_EXPIRATION_FIXED_DELAY:1s}
+      claim-ttl: ${PACING_WORKER_EXPIRATION_CLAIM_TTL:1m}
       batch-size: ${PACING_WORKER_EXPIRATION_BATCH_SIZE:500}
 
     reservation-repair:
       enabled: ${PACING_WORKER_RESERVATION_REPAIR_ENABLED:true}
       fixed-delay: ${PACING_WORKER_RESERVATION_REPAIR_FIXED_DELAY:10s}
       grace-period: ${PACING_WORKER_RESERVATION_REPAIR_GRACE_PERIOD:5s}
+      claim-ttl: ${PACING_WORKER_RESERVATION_REPAIR_CLAIM_TTL:1m}
       batch-size: ${PACING_WORKER_RESERVATION_REPAIR_BATCH_SIZE:500}
 
     reconciliation:
@@ -94,6 +96,7 @@ pacing:
       zone-id: ${PACING_WORKER_RECONCILIATION_ZONE_ID:Asia/Seoul}
       batch-size: ${PACING_WORKER_RECONCILIATION_BATCH_SIZE:500}
       max-repair-attempts: ${PACING_WORKER_RECONCILIATION_MAX_REPAIR_ATTEMPTS:3}
+      lock-ttl: ${PACING_WORKER_RECONCILIATION_LOCK_TTL:2h}
 
 management:
   server:

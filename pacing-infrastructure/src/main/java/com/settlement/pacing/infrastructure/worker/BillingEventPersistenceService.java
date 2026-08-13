@@ -131,16 +131,6 @@ public class BillingEventPersistenceService {
         ));
     }
 
-    public java.util.List<String> findExpirationCandidates(
-            Instant now,
-            int batchSize
-    ) {
-        return reservationRepository.findExpirationCandidates(
-                now,
-                batchSize
-        );
-    }
-
     @Transactional
     public void complete(
             String eventId,

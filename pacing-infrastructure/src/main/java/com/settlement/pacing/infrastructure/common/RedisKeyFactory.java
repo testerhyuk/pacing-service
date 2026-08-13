@@ -133,6 +133,10 @@ public class RedisKeyFactory {
         return keyPrefix + ":reservation-persistence-pending";
     }
 
+    public String reservationPersistenceProcessing() {
+        return keyPrefix + ":reservation-persistence-processing";
+    }
+
     public String campaignReservationPersistencePending(
             String campaignId
     ) {
@@ -203,6 +207,19 @@ public class RedisKeyFactory {
         return keyPrefix
                 + ":recovery-lock:{"
                 + encode(campaignId)
+                + "}";
+    }
+
+    public String budgetReconciliationLock(LocalDate budgetDate) {
+        if (budgetDate == null) {
+            throw new IllegalArgumentException(
+                    "예산 대사 기준일은 null일 수 없습니다"
+            );
+        }
+
+        return keyPrefix
+                + ":budget-reconciliation-lock:{"
+                + budgetDate
                 + "}";
     }
 

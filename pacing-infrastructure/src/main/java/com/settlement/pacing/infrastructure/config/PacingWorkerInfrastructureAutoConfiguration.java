@@ -15,7 +15,9 @@ import com.settlement.pacing.infrastructure.worker.BillingEventJpaRepository;
 import com.settlement.pacing.infrastructure.worker.BillingEventEntity;
 import com.settlement.pacing.infrastructure.worker.BillingEventPersistenceService;
 import com.settlement.pacing.infrastructure.worker.BudgetReconciliationAdapter;
+import com.settlement.pacing.infrastructure.worker.RedisBudgetReconciliationLockAdapter;
 import com.settlement.pacing.infrastructure.worker.BudgetReconciliationRepository;
+import com.settlement.pacing.infrastructure.worker.ExpirationClaimRepository;
 import com.settlement.pacing.infrastructure.worker.RedisBillingEventProcessingAdapter;
 import com.settlement.pacing.infrastructure.worker.RedisExpiredReservationAdapter;
 import com.settlement.pacing.infrastructure.worker.RedisReservationRepairAdapter;
@@ -24,6 +26,7 @@ import com.settlement.pacing.worker.billing.application.BillingEventProcessingGa
 import com.settlement.pacing.worker.config.PacingWorkerProperties;
 import com.settlement.pacing.worker.expiration.application.ExpiredReservationGateway;
 import com.settlement.pacing.worker.reconciliation.application.ReservationRepairGateway;
+import com.settlement.pacing.worker.reconciliation.application.BudgetReconciliationLockGateway;
 import com.settlement.pacing.worker.reconciliation.application.BudgetReconciliationGateway;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -232,14 +235,25 @@ public class PacingWorkerInfrastructureAutoConfiguration {
             BillingEventPersistenceService persistenceService,
             RedisBudgetStateStore budgetStateStore,
             BudgetStateRecoveryService recoveryService,
-            RedisWorkerStateStore workerStateStore
+            RedisWorkerStateStore workerStateStore,
+            ExpirationClaimRepository claimRepository,
+            PacingWorkerProperties properties
     ) {
         return new RedisExpiredReservationAdapter(
                 persistenceService,
                 budgetStateStore,
                 recoveryService,
-                workerStateStore
+                workerStateStore,
+                claimRepository,
+                properties.expiration().claimTtl()
         );
+    }
+
+    @Bean
+    public ExpirationClaimRepository expirationClaimRepository(
+            JdbcClient jdbcClient
+    ) {
+        return new ExpirationClaimRepository(jdbcClient);
     }
 
     @Bean
@@ -249,13 +263,26 @@ public class PacingWorkerInfrastructureAutoConfiguration {
             RedisKeyFactory keyFactory,
             ReservationPersistenceService persistenceService,
             @Qualifier("compensateReservationScript")
-            RedisScript<Long> compensateReservationScript
+            RedisScript<Long> compensateReservationScript,
+            @Qualifier("claimReservationRepairsScript")
+            RedisScript<List> claimReservationRepairsScript,
+            @Qualifier("releaseReservationRepairClaimScript")
+            RedisScript<Long> releaseReservationRepairClaimScript,
+            @Qualifier("completeReservationRepairClaimScript")
+            RedisScript<Long> completeReservationRepairClaimScript,
+            Clock clock,
+            PacingWorkerProperties properties
     ) {
         return new RedisReservationRepairAdapter(
                 redisTemplate,
                 keyFactory,
                 persistenceService,
-                compensateReservationScript
+                compensateReservationScript,
+                claimReservationRepairsScript,
+                releaseReservationRepairClaimScript,
+                completeReservationRepairClaimScript,
+                clock,
+                properties.reservationRepair().claimTtl()
         );
     }
 
@@ -283,6 +310,22 @@ public class PacingWorkerInfrastructureAutoConfiguration {
                 repository,
                 clock,
                 properties.reconciliation().maxRepairAttempts()
+        );
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(BudgetReconciliationLockGateway.class)
+    public BudgetReconciliationLockGateway
+    budgetReconciliationLockGateway(
+            StringRedisTemplate redisTemplate,
+            RedisKeyFactory keyFactory,
+            @Qualifier("releaseLockScript")
+            RedisScript<Long> releaseLockScript
+    ) {
+        return new RedisBudgetReconciliationLockAdapter(
+                redisTemplate,
+                keyFactory,
+                releaseLockScript
         );
     }
 }

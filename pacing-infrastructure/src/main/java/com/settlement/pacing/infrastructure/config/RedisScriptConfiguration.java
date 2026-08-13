@@ -100,6 +100,25 @@ public class RedisScriptConfiguration {
     }
 
     @Bean
+    public RedisScript<List> claimReservationRepairsScript() {
+        return listScript("redis/claim_reservation_repairs.lua");
+    }
+
+    @Bean
+    public RedisScript<Long> releaseReservationRepairClaimScript() {
+        return longScript(
+                "redis/release_reservation_repair_claim.lua"
+        );
+    }
+
+    @Bean
+    public RedisScript<Long> completeReservationRepairClaimScript() {
+        return longScript(
+                "redis/complete_reservation_repair_claim.lua"
+        );
+    }
+
+    @Bean
     public RedisScript<String> admitRequestScript() {
         return stringScript("redis/admit_request.lua");
     }

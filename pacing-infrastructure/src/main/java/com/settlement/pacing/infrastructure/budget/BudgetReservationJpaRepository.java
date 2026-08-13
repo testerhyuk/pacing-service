@@ -8,7 +8,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.LocalDate;
-import java.util.List;
 
 public interface BudgetReservationJpaRepository
         extends JpaRepository<BudgetReservationEntity, String> {
@@ -54,19 +53,6 @@ public interface BudgetReservationJpaRepository
             @Param("persistedAt") Instant persistedAt
     );
 
-    @Query(value = """
-            SELECT reservation_id
-            FROM budget_reservation
-            WHERE status = 'RESERVED'
-              AND expires_at <= :now
-            ORDER BY expires_at, reservation_id
-            LIMIT :batchSize
-            """, nativeQuery = true)
-    List<String> findExpirationCandidates(
-            @Param("now") Instant now,
-            @Param("batchSize") int batchSize
-    );
-
     /**
      * Redis에서 더 높은 version으로 완료된 상태만 PostgreSQL에 반영한다.
      * 늦게 끝난 이전 작업이 최신 예약 상태를 덮어쓰지 못하게 한다.
@@ -78,6 +64,8 @@ public interface BudgetReservationJpaRepository
             SET status = :status,
                 applied_amount = :appliedAmount,
                 version = :version,
+                expiration_claim_token = NULL,
+                expiration_claimed_until = NULL,
                 updated_at = :updatedAt
             WHERE reservation_id = :reservationId
               AND version < :version

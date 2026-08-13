@@ -170,6 +170,25 @@ public class PacingWorkerMetrics {
                 .increment();
     }
 
+    public void recordBudgetReconciliationSkipped() {
+        Counter.builder("pacing.worker.reconciliation.execution")
+                .tag("outcome", "LOCK_NOT_ACQUIRED")
+                .register(meterRegistry)
+                .increment();
+    }
+
+    public void recordBudgetReconciliationLockFailure(
+            RuntimeException exception
+    ) {
+        Counter.builder("pacing.worker.reconciliation.lock.failure")
+                .tag(
+                        "reason",
+                        exception.getClass().getSimpleName()
+                )
+                .register(meterRegistry)
+                .increment();
+    }
+
     private void recordRepairResult(
             String outcome,
             int count
