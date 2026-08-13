@@ -6,6 +6,7 @@ import com.settlement.pacing.api.decision.application.PacingDecisionResult;
 import com.settlement.pacing.api.decision.application.PacingDecisionService;
 import com.settlement.pacing.api.decision.web.PacingDecisionController;
 import com.settlement.pacing.api.monitoring.PacingApiMetrics;
+import com.settlement.pacing.api.monitoring.StorageAvailabilityMonitor;
 import com.settlement.pacing.api.reservation.application.BudgetReservationService;
 import com.settlement.pacing.api.security.*;
 import com.settlement.pacing.core.pacing.DecisionReason;
@@ -75,6 +76,9 @@ class SecurityConfigurationTest {
 
     @MockitoBean
     private RequestAdmissionGateway requestAdmissionGateway;
+
+    @MockitoBean
+    private StorageAvailabilityMonitor storageAvailabilityMonitor;
 
     @BeforeEach
     void setUp() {

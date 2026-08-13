@@ -41,6 +41,45 @@ groups:
         annotations:
           summary: "페이싱 판단 API p99가 100ms를 초과함"
 
+      - alert: PacingStorageFailureRateWarning
+        expr: |
+          (
+            sum(rate(pacing_api_storage_failure_total[1m]))
+            /
+            clamp_min(
+              sum(rate(http_server_requests_seconds_count{uri=~"/internal/.*"}[1m])),
+              0.001
+            )
+          ) > 0.01
+          and
+          (
+            sum(rate(pacing_api_storage_failure_total[1m]))
+            /
+            clamp_min(
+              sum(rate(http_server_requests_seconds_count{uri=~"/internal/.*"}[1m])),
+              0.001
+            )
+          ) <= 0.10
+        labels:
+          severity: warning
+        annotations:
+          summary: "저장소 접근 실패율이 최근 1분 동안 1%를 초과함"
+
+      - alert: PacingStorageFailureRateCritical
+        expr: |
+          (
+            sum(rate(pacing_api_storage_failure_total[1m]))
+            /
+            clamp_min(
+              sum(rate(http_server_requests_seconds_count{uri=~"/internal/.*"}[1m])),
+              0.001
+            )
+          ) > 0.10
+        labels:
+          severity: critical
+        annotations:
+          summary: "저장소 접근 실패율이 최근 1분 동안 10%를 초과함"
+
       - alert: PacingTargetDown
         expr: up{job=~"pacing-api|pacing-worker"} == 0
         for: 2m

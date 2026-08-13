@@ -7,6 +7,9 @@ import com.settlement.pacing.api.error.CampaignNotFoundException;
 import com.settlement.pacing.api.error.PacingStateUpdateException;
 import com.settlement.pacing.api.gateway.*;
 import com.settlement.pacing.api.monitoring.PacingApiMetrics;
+import com.settlement.pacing.api.monitoring.StorageAvailabilityMonitor;
+import com.settlement.pacing.api.monitoring.StorageOperation;
+import com.settlement.pacing.api.monitoring.StorageType;
 import com.settlement.pacing.core.budget.BudgetState;
 import com.settlement.pacing.core.budget.Money;
 import com.settlement.pacing.core.campaign.Campaign;
@@ -65,6 +68,7 @@ class PacingDecisionServiceTest {
     private PacingEngine pacingEngine;
     private SampleRateGenerator sampleRateGenerator;
     private PacingApiMetrics pacingApiMetrics;
+    private StorageAvailabilityMonitor storageAvailabilityMonitor;
 
     private PacingDecisionService service;
     private Campaign campaign;
@@ -83,6 +87,8 @@ class PacingDecisionServiceTest {
         pacingEngine = mock(PacingEngine.class);
         sampleRateGenerator = mock(SampleRateGenerator.class);
         pacingApiMetrics = mock(PacingApiMetrics.class);
+        storageAvailabilityMonitor =
+                mock(StorageAvailabilityMonitor.class);
         decisionContextQueryGateway = mock(DecisionContextQueryGateway.class);
 
         PacingProperties properties = properties(3);
@@ -98,7 +104,8 @@ class PacingDecisionServiceTest {
                 properties,
                 clock,
                 pacingApiMetrics,
-                decisionContextQueryGateway
+                decisionContextQueryGateway,
+                storageAvailabilityMonitor
         );
 
         campaign = new Campaign(
@@ -187,6 +194,14 @@ class PacingDecisionServiceTest {
                 eq(SAMPLE_RATE),
                 eq(PacingObservation.empty())
         );
+        verify(storageAvailabilityMonitor).recordSuccess(
+                StorageType.REDIS,
+                StorageOperation.DECISION
+        );
+        verify(storageAvailabilityMonitor, never()).recordSuccess(
+                StorageType.POSTGRESQL,
+                StorageOperation.DECISION
+        );
     }
 
     @Test
@@ -202,6 +217,14 @@ class PacingDecisionServiceTest {
                 eq(initialPacingState),
                 eq(SAMPLE_RATE),
                 eq(PacingObservation.empty())
+        );
+        verify(storageAvailabilityMonitor).recordSuccess(
+                StorageType.REDIS,
+                StorageOperation.DECISION
+        );
+        verify(storageAvailabilityMonitor).recordSuccess(
+                StorageType.POSTGRESQL,
+                StorageOperation.DECISION
         );
     }
 

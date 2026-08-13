@@ -8,6 +8,7 @@ import com.settlement.pacing.api.error.ReservationConflictException;
 import com.settlement.pacing.api.reservation.application.BudgetReservationCommand;
 import com.settlement.pacing.api.reservation.application.BudgetReservationResult;
 import com.settlement.pacing.api.reservation.application.BudgetReservationService;
+import com.settlement.pacing.api.monitoring.StorageAvailabilityMonitor;
 import com.settlement.pacing.core.budget.BudgetReservation;
 import com.settlement.pacing.core.budget.Money;
 import org.junit.jupiter.api.BeforeEach;
@@ -59,7 +60,9 @@ class BudgetReservationControllerTest {
 
         mockMvc = MockMvcBuilders
                 .standaloneSetup(controller)
-                .setControllerAdvice(new GlobalExceptionHandler())
+                .setControllerAdvice(new GlobalExceptionHandler(
+                        mock(StorageAvailabilityMonitor.class)
+                ))
                 .setValidator(validator)
                 .build();
     }

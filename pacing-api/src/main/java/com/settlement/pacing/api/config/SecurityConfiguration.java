@@ -3,6 +3,7 @@ package com.settlement.pacing.api.config;
 import com.settlement.pacing.api.audit.AuditLogger;
 import com.settlement.pacing.api.error.ErrorCode;
 import com.settlement.pacing.api.monitoring.PacingApiMetrics;
+import com.settlement.pacing.api.monitoring.StorageAvailabilityMonitor;
 import com.settlement.pacing.api.security.*;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
@@ -35,7 +36,8 @@ public class SecurityConfiguration {
             PacingApiMetrics metrics,
             AuditLogger auditLogger,
             SecurityErrorResponseWriter errorResponseWriter,
-            RequestAdmissionGateway requestAdmissionGateway
+            RequestAdmissionGateway requestAdmissionGateway,
+            StorageAvailabilityMonitor storageAvailabilityMonitor
     ) throws Exception {
         HmacAuthenticationFilter hmacAuthenticationFilter =
                 new HmacAuthenticationFilter(
@@ -46,7 +48,8 @@ public class SecurityConfiguration {
                         metrics,
                         auditLogger,
                         errorResponseWriter,
-                        requestAdmissionGateway
+                        requestAdmissionGateway,
+                        storageAvailabilityMonitor
                 );
 
         http

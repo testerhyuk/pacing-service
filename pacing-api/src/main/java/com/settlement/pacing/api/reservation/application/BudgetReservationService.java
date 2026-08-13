@@ -2,6 +2,9 @@ package com.settlement.pacing.api.reservation.application;
 
 import com.settlement.pacing.api.config.PacingProperties;
 import com.settlement.pacing.api.monitoring.PacingApiMetrics;
+import com.settlement.pacing.api.monitoring.StorageAvailabilityMonitor;
+import com.settlement.pacing.api.monitoring.StorageOperation;
+import com.settlement.pacing.api.monitoring.StorageType;
 import com.settlement.pacing.api.error.BudgetStateUnavailableException;
 import com.settlement.pacing.api.error.CampaignNotReservableException;
 import com.settlement.pacing.api.error.CampaignNotFoundException;
@@ -34,6 +37,7 @@ public class BudgetReservationService {
     private final PacingProperties pacingProperties;
     private final Clock clock;
     private final PacingApiMetrics pacingApiMetrics;
+    private final StorageAvailabilityMonitor storageAvailabilityMonitor;
 
     public BudgetReservationResult reserve(BudgetReservationCommand command) {
         Timer.Sample timerSample = pacingApiMetrics.startTimer();
@@ -53,6 +57,10 @@ public class BudgetReservationService {
                     budgetReservationGateway.findById(
                             command.reservationId()
                     );
+            storageAvailabilityMonitor.recordSuccess(
+                    StorageType.POSTGRESQL,
+                    StorageOperation.RESERVATION
+            );
 
             if (existingReservation.isPresent()) {
                 BudgetReservation existing = existingReservation.get();
@@ -75,6 +83,10 @@ public class BudgetReservationService {
                         existing.campaignId(),
                         existing.amount(),
                         existing.reservedAt()
+                );
+                storageAvailabilityMonitor.recordSuccess(
+                        StorageType.REDIS,
+                        StorageOperation.RESERVATION
                 );
 
                 pacingApiMetrics.recordPacingReservation(
@@ -115,6 +127,14 @@ public class BudgetReservationService {
             );
 
             ReservationExecutionResult executionResult = budgetReservationGateway.reserve(reservation);
+            storageAvailabilityMonitor.recordSuccess(
+                    StorageType.REDIS,
+                    StorageOperation.RESERVATION
+            );
+            storageAvailabilityMonitor.recordSuccess(
+                    StorageType.POSTGRESQL,
+                    StorageOperation.RESERVATION
+            );
             ReservationExecutionStatus executionStatus =
                     resolveExecutionStatus(
                             executionResult,
