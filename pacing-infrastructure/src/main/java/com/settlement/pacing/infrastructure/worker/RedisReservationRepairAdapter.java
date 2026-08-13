@@ -14,11 +14,13 @@ import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 
+import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
+import java.util.UUID;
 
 public class RedisReservationRepairAdapter
         implements ReservationRepairGateway {
@@ -31,18 +33,36 @@ public class RedisReservationRepairAdapter
     private final RedisKeyFactory keyFactory;
     private final ReservationPersistenceService persistenceService;
     private final RedisScript<Long> compensateReservationScript;
+    private final RedisScript<List> claimReservationRepairsScript;
+    private final RedisScript<Long> releaseReservationRepairClaimScript;
+    private final RedisScript<Long> completeReservationRepairClaimScript;
+    private final Clock clock;
+    private final Duration claimTtl;
 
     public RedisReservationRepairAdapter(
             StringRedisTemplate redisTemplate,
             RedisKeyFactory keyFactory,
             ReservationPersistenceService persistenceService,
-            RedisScript<Long> compensateReservationScript
+            RedisScript<Long> compensateReservationScript,
+            RedisScript<List> claimReservationRepairsScript,
+            RedisScript<Long> releaseReservationRepairClaimScript,
+            RedisScript<Long> completeReservationRepairClaimScript,
+            Clock clock,
+            Duration claimTtl
     ) {
         this.redisTemplate = redisTemplate;
         this.keyFactory = keyFactory;
         this.persistenceService = persistenceService;
         this.compensateReservationScript =
                 compensateReservationScript;
+        this.claimReservationRepairsScript =
+                claimReservationRepairsScript;
+        this.releaseReservationRepairClaimScript =
+                releaseReservationRepairClaimScript;
+        this.completeReservationRepairClaimScript =
+                completeReservationRepairClaimScript;
+        this.clock = clock;
+        this.claimTtl = claimTtl;
     }
 
     @Override
@@ -62,14 +82,14 @@ public class RedisReservationRepairAdapter
             );
         }
 
-        Set<String> candidates = redisTemplate.opsForZSet()
-                .rangeByScore(
-                        keyFactory.reservationPersistencePending(),
-                        Double.NEGATIVE_INFINITY,
-                        eligibleBefore.toEpochMilli(),
-                        0,
-                        batchSize
-                );
+        Instant claimedAt = clock.instant();
+        String claimToken = UUID.randomUUID().toString();
+        List<String> candidates = claim(
+                batchSize,
+                eligibleBefore,
+                claimedAt,
+                claimToken
+        );
 
         int scanned = 0;
         int repaired = 0;
@@ -92,6 +112,7 @@ public class RedisReservationRepairAdapter
 
             try {
                 RepairOutcome outcome = repairOne(member);
+                completeClaim(member, claimToken);
 
                 switch (outcome) {
                     case REPAIRED -> repaired++;
@@ -99,6 +120,7 @@ public class RedisReservationRepairAdapter
                     case REMOVED -> removed++;
                 }
             } catch (RuntimeException exception) {
+                releaseClaimSafely(member, claimToken);
                 failed++;
                 log.error(
                         "예약 영속화 복구에 실패했습니다: member={}",
@@ -128,7 +150,6 @@ public class RedisReservationRepairAdapter
                 .entries(reservationKey);
 
         if (values.isEmpty()) {
-            clearPending(pending, member);
             return RepairOutcome.REMOVED;
         }
 
@@ -141,11 +162,8 @@ public class RedisReservationRepairAdapter
                 reservation
         )) {
             compensate(reservation);
-            clearPending(pending, member);
             return RepairOutcome.REMOVED;
         }
-
-        clearPending(pending, member);
 
         if (insertResult.inserted()) {
             return RepairOutcome.REPAIRED;
@@ -216,20 +234,92 @@ public class RedisReservationRepairAdapter
         }
     }
 
-    private void clearPending(
-            RedisKeyFactory.PendingReservationKey pending,
+    private List<String> claim(
+            int batchSize,
+            Instant eligibleBefore,
+            Instant claimedAt,
+            String claimToken
+    ) {
+        List<?> claimed = redisTemplate.execute(
+                claimReservationRepairsScript,
+                List.of(
+                        keyFactory.reservationPersistencePending(),
+                        keyFactory.reservationPersistenceProcessing()
+                ),
+                Long.toString(eligibleBefore.toEpochMilli()),
+                Long.toString(claimedAt.toEpochMilli()),
+                Long.toString(
+                        claimedAt.plus(claimTtl).toEpochMilli()
+                ),
+                Integer.toString(batchSize),
+                claimToken
+        );
+
+        if (claimed == null || claimed.isEmpty()) {
+            return List.of();
+        }
+
+        return claimed.stream()
+                .map(Object::toString)
+                .toList();
+    }
+
+    private void completeClaim(
+            String member,
+            String claimToken
+    ) {
+        RedisKeyFactory.PendingReservationKey pending =
+                keyFactory.parseReservationPersistenceMember(member);
+
+        redisTemplate.execute(
+                completeReservationRepairClaimScript,
+                List.of(
+                        keyFactory.reservationPersistenceProcessing(),
+                        keyFactory.campaignReservationPersistencePending(
+                                pending.campaignId()
+                        )
+                ),
+                claimedMember(claimToken, member),
+                member
+        );
+    }
+
+    private void releaseClaimSafely(
+            String member,
+            String claimToken
+    ) {
+        try {
+            releaseClaim(member, claimToken);
+        } catch (RuntimeException releaseException) {
+            log.error(
+                    "예약 영속화 복구 선점 해제에 실패했습니다: member={}",
+                    member,
+                    releaseException
+            );
+        }
+    }
+
+    private void releaseClaim(
+            String member,
+            String claimToken
+    ) {
+        redisTemplate.execute(
+                releaseReservationRepairClaimScript,
+                List.of(
+                        keyFactory.reservationPersistencePending(),
+                        keyFactory.reservationPersistenceProcessing()
+                ),
+                claimedMember(claimToken, member),
+                member,
+                Long.toString(clock.instant().toEpochMilli())
+        );
+    }
+
+    private String claimedMember(
+            String claimToken,
             String member
     ) {
-        redisTemplate.opsForZSet().remove(
-                keyFactory.campaignReservationPersistencePending(
-                        pending.campaignId()
-                ),
-                member
-        );
-        redisTemplate.opsForZSet().remove(
-                keyFactory.reservationPersistencePending(),
-                member
-        );
+        return claimToken + "|" + member;
     }
 
     private boolean sameIdentity(

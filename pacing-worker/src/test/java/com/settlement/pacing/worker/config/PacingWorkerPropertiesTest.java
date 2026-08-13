@@ -67,6 +67,7 @@ class PacingWorkerPropertiesTest {
         assertThatThrownBy(() ->
                 new PacingWorkerProperties.Expiration(
                         Duration.ZERO,
+                        Duration.ofMinutes(1),
                         100
                 )
         )
@@ -93,6 +94,7 @@ class PacingWorkerPropertiesTest {
     private PacingWorkerProperties.Expiration expiration() {
         return new PacingWorkerProperties.Expiration(
                 Duration.ofSeconds(1),
+                Duration.ofMinutes(1),
                 100
         );
     }
@@ -102,6 +104,7 @@ class PacingWorkerPropertiesTest {
         return new PacingWorkerProperties.ReservationRepair(
                 Duration.ofSeconds(10),
                 Duration.ofSeconds(5),
+                Duration.ofMinutes(1),
                 100
         );
     }
@@ -111,7 +114,8 @@ class PacingWorkerPropertiesTest {
                 "0 10 0 * * *",
                 ZoneId.of("Asia/Seoul"),
                 100,
-                3
+                3,
+                Duration.ofHours(2)
         );
     }
 }

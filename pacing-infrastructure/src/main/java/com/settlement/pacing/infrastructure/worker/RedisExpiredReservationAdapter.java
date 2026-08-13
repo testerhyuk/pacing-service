@@ -12,7 +12,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Instant;
+import java.time.Duration;
 import java.util.List;
+import java.util.UUID;
 
 public class RedisExpiredReservationAdapter
         implements ExpiredReservationGateway {
@@ -25,17 +27,23 @@ public class RedisExpiredReservationAdapter
     private final RedisBudgetStateStore budgetStateStore;
     private final BudgetStateRecoveryService recoveryService;
     private final RedisWorkerStateStore workerStateStore;
+    private final ExpirationClaimRepository claimRepository;
+    private final Duration claimTtl;
 
     public RedisExpiredReservationAdapter(
             BillingEventPersistenceService persistenceService,
             RedisBudgetStateStore budgetStateStore,
             BudgetStateRecoveryService recoveryService,
-            RedisWorkerStateStore workerStateStore
+            RedisWorkerStateStore workerStateStore,
+            ExpirationClaimRepository claimRepository,
+            Duration claimTtl
     ) {
         this.persistenceService = persistenceService;
         this.budgetStateStore = budgetStateStore;
         this.recoveryService = recoveryService;
         this.workerStateStore = workerStateStore;
+        this.claimRepository = claimRepository;
+        this.claimTtl = claimTtl;
     }
 
     @Override
@@ -55,11 +63,13 @@ public class RedisExpiredReservationAdapter
             );
         }
 
-        List<String> candidates =
-                persistenceService.findExpirationCandidates(
-                        now,
-                        batchSize
-                );
+        String claimToken = UUID.randomUUID().toString();
+        List<String> candidates = claimRepository.claim(
+                now,
+                batchSize,
+                claimToken,
+                now.plus(claimTtl)
+        );
 
         int expired = 0;
         int skipped = 0;
@@ -84,6 +94,8 @@ public class RedisExpiredReservationAdapter
                         exception
                 );
                 conflicts++;
+            } finally {
+                releaseClaim(reservationId, claimToken);
             }
         }
 
@@ -93,6 +105,24 @@ public class RedisExpiredReservationAdapter
                 skipped,
                 conflicts
         );
+    }
+
+    private void releaseClaim(
+            String reservationId,
+            String claimToken
+    ) {
+        try {
+            claimRepository.release(
+                    reservationId,
+                    claimToken
+            );
+        } catch (RuntimeException exception) {
+            log.error(
+                    "예약 만료 선점 해제에 실패했습니다: {}",
+                    reservationId,
+                    exception
+            );
+        }
     }
 
     private CandidateResult expireOne(

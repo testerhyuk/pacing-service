@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.Clock;
 import java.time.LocalDate;
+import java.util.Optional;
 
 @Component
 @ConditionalOnProperty(
@@ -25,17 +26,20 @@ public class DailyBudgetReconciliationScheduler {
             );
 
     private final BudgetReconciliationGateway gateway;
+    private final BudgetReconciliationLockGateway lockGateway;
     private final PacingWorkerProperties properties;
     private final PacingWorkerMetrics metrics;
     private final Clock clock;
 
     public DailyBudgetReconciliationScheduler(
             BudgetReconciliationGateway gateway,
+            BudgetReconciliationLockGateway lockGateway,
             PacingWorkerProperties properties,
             PacingWorkerMetrics metrics,
             Clock clock
     ) {
         this.gateway = gateway;
+        this.lockGateway = lockGateway;
         this.properties = properties;
         this.metrics = metrics;
         this.clock = clock;
@@ -53,6 +57,28 @@ public class DailyBudgetReconciliationScheduler {
                 .toLocalDate()
                 .minusDays(1);
 
+        Optional<BudgetReconciliationLockGateway.LockHandle> lock;
+
+        try {
+            lock = lockGateway.tryAcquire(
+                    budgetDate,
+                    configuration.lockTtl()
+            );
+        } catch (RuntimeException exception) {
+            metrics.recordBudgetReconciliationLockFailure(exception);
+            log.error(
+                    "일일 예산 대사 분산 Lock 획득에 실패했습니다: {}",
+                    budgetDate,
+                    exception
+            );
+            return;
+        }
+
+        if (lock.isEmpty()) {
+            metrics.recordBudgetReconciliationSkipped();
+            return;
+        }
+
         try {
             BudgetReconciliationResult result = gateway.reconcile(
                     budgetDate,
@@ -64,6 +90,23 @@ public class DailyBudgetReconciliationScheduler {
             log.error(
                     "일 마감 예산 대사에 실패했습니다: {}",
                     budgetDate,
+                    exception
+            );
+        } finally {
+            releaseLock(lock.get());
+        }
+    }
+
+    private void releaseLock(
+            BudgetReconciliationLockGateway.LockHandle lock
+    ) {
+        try {
+            lockGateway.release(lock);
+        } catch (RuntimeException exception) {
+            metrics.recordBudgetReconciliationLockFailure(exception);
+            log.error(
+                    "일일 예산 대사 분산 Lock 해제에 실패했습니다: {}",
+                    lock.budgetDate(),
                     exception
             );
         }
