@@ -1,0 +1,15 @@
+spring:
+  config:
+    activate:
+      on-profile: redis-cluster
+
+  data:
+    redis:
+      cluster:
+        nodes: ${PACING_REDIS_CLUSTER_NODES}
+        max-redirects: ${PACING_REDIS_CLUSTER_MAX_REDIRECTS:5}
+      lettuce:
+        cluster:
+          refresh:
+            adaptive: true
+            period: ${PACING_REDIS_CLUSTER_TOPOLOGY_REFRESH:30s}

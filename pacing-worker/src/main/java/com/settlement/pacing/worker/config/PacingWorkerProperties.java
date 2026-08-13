@@ -71,7 +71,8 @@ public record PacingWorkerProperties(
             @NotNull Duration fixedDelay,
             @NotNull Duration gracePeriod,
             @NotNull Duration claimTtl,
-            @Min(1) int batchSize
+            @Min(1) int batchSize,
+            @Min(1) int campaignScanBatchSize
     ) {
         public ReservationRepair {
             validatePositive(

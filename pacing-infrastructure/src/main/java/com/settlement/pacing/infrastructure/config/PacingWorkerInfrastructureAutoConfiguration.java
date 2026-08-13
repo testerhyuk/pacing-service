@@ -15,6 +15,7 @@ import com.settlement.pacing.infrastructure.worker.BillingEventJpaRepository;
 import com.settlement.pacing.infrastructure.worker.BillingEventEntity;
 import com.settlement.pacing.infrastructure.worker.BillingEventPersistenceService;
 import com.settlement.pacing.infrastructure.worker.BudgetReconciliationAdapter;
+import com.settlement.pacing.infrastructure.worker.CampaignRepairScanRepository;
 import com.settlement.pacing.infrastructure.worker.RedisBudgetReconciliationLockAdapter;
 import com.settlement.pacing.infrastructure.worker.BudgetReconciliationRepository;
 import com.settlement.pacing.infrastructure.worker.ExpirationClaimRepository;
@@ -262,6 +263,7 @@ public class PacingWorkerInfrastructureAutoConfiguration {
             StringRedisTemplate redisTemplate,
             RedisKeyFactory keyFactory,
             ReservationPersistenceService persistenceService,
+            CampaignRepairScanRepository campaignScanRepository,
             @Qualifier("compensateReservationScript")
             RedisScript<Long> compensateReservationScript,
             @Qualifier("claimReservationRepairsScript")
@@ -277,13 +279,22 @@ public class PacingWorkerInfrastructureAutoConfiguration {
                 redisTemplate,
                 keyFactory,
                 persistenceService,
+                campaignScanRepository,
                 compensateReservationScript,
                 claimReservationRepairsScript,
                 releaseReservationRepairClaimScript,
                 completeReservationRepairClaimScript,
                 clock,
-                properties.reservationRepair().claimTtl()
+                properties.reservationRepair().claimTtl(),
+                properties.reservationRepair()
+                        .campaignScanBatchSize()
         );
+    }
+
+    @Bean
+    public CampaignRepairScanRepository
+    campaignRepairScanRepository(JdbcClient jdbcClient) {
+        return new CampaignRepairScanRepository(jdbcClient);
     }
 
     @Bean

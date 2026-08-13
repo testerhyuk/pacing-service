@@ -186,7 +186,6 @@ public class RedisBudgetReservationAdapter
                         keyFactory.reservationExpiry(
                                 reservation.campaignId()
                         ),
-                        keyFactory.reservationPersistencePending(),
                         keyFactory.campaignReservationPersistencePending(
                                 reservation.campaignId()
                         )
@@ -313,10 +312,6 @@ public class RedisBudgetReservationAdapter
                 keyFactory.campaignReservationPersistencePending(
                         reservation.campaignId()
                 ),
-                member
-        );
-        redisTemplate.opsForZSet().remove(
-                keyFactory.reservationPersistencePending(),
                 member
         );
     }

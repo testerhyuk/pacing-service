@@ -73,7 +73,6 @@ local dailyKey = KEYS[2]
 local reservationKey = KEYS[3]
 local expiryKey = KEYS[4]
 local persistencePendingKey = KEYS[5]
-local campaignPersistencePendingKey = KEYS[6]
 
 local reservationId = ARGV[1]
 local campaignId = ARGV[2]
@@ -188,13 +187,6 @@ redis.call(
 redis.call(
     'ZADD',
     persistencePendingKey,
-    tonumber(persistencePendingAt),
-    persistenceMember
-)
-
-redis.call(
-    'ZADD',
-    campaignPersistencePendingKey,
     tonumber(persistencePendingAt),
     persistenceMember
 )
