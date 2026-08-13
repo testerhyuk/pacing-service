@@ -7,6 +7,7 @@ import com.settlement.pacing.api.error.BudgetStateUnavailableException;
 import com.settlement.pacing.api.error.CampaignNotFoundException;
 import com.settlement.pacing.api.error.GlobalExceptionHandler;
 import com.settlement.pacing.api.error.InvalidRequestException;
+import com.settlement.pacing.api.monitoring.StorageAvailabilityMonitor;
 import com.settlement.pacing.core.pacing.DecisionReason;
 import com.settlement.pacing.core.pacing.DecisionType;
 import org.junit.jupiter.api.BeforeEach;
@@ -47,7 +48,9 @@ class PacingDecisionControllerTest {
 
         mockMvc = MockMvcBuilders
                 .standaloneSetup(controller)
-                .setControllerAdvice(new GlobalExceptionHandler())
+                .setControllerAdvice(new GlobalExceptionHandler(
+                        mock(StorageAvailabilityMonitor.class)
+                ))
                 .setValidator(validator)
                 .build();
     }

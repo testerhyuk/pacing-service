@@ -4,6 +4,9 @@ import com.settlement.pacing.api.audit.AuditLogger;
 import com.settlement.pacing.api.config.HmacSecurityProperties;
 import com.settlement.pacing.api.error.ErrorCode;
 import com.settlement.pacing.api.monitoring.PacingApiMetrics;
+import com.settlement.pacing.api.monitoring.StorageAvailabilityMonitor;
+import com.settlement.pacing.api.monitoring.StorageOperation;
+import com.settlement.pacing.api.monitoring.StorageType;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -63,6 +66,7 @@ class HmacAuthenticationFilterTest {
     private HmacAuthenticationFilter filter;
     private HmacSecurityProperties properties;
     private RequestAdmissionGateway requestAdmissionGateway;
+    private StorageAvailabilityMonitor storageAvailabilityMonitor;
 
     @BeforeEach
     void setUp() throws IOException {
@@ -73,6 +77,8 @@ class HmacAuthenticationFilterTest {
         errorResponseWriter = mock(SecurityErrorResponseWriter.class);
         filterChain = mock(FilterChain.class);
         requestAdmissionGateway = mock(RequestAdmissionGateway.class);
+        storageAvailabilityMonitor =
+                mock(StorageAvailabilityMonitor.class);
 
         properties = properties(Set.of(
                 ClientPermission.PACING_DECIDE,
@@ -87,7 +93,8 @@ class HmacAuthenticationFilterTest {
                 metrics,
                 auditLogger,
                 errorResponseWriter,
-                requestAdmissionGateway
+                requestAdmissionGateway,
+                storageAvailabilityMonitor
         );
 
         when(canonicalRequestBuilder.build(
@@ -152,6 +159,10 @@ class HmacAuthenticationFilterTest {
         verify(filterChain).doFilter(
                 any(HttpServletRequest.class),
                 eq(response)
+        );
+        verify(storageAvailabilityMonitor).recordSuccess(
+                StorageType.REDIS,
+                StorageOperation.AUTHENTICATION
         );
     }
 
@@ -429,6 +440,11 @@ class HmacAuthenticationFilterTest {
                 ErrorCode.STORAGE_UNAVAILABLE,
                 "인증 상태 저장소를 사용할 수 없습니다",
                 PATH
+        );
+        verify(storageAvailabilityMonitor).recordFailure(
+                eq(StorageType.REDIS),
+                eq(StorageOperation.AUTHENTICATION),
+                any(DataAccessResourceFailureException.class)
         );
 
         verify(filterChain, never()).doFilter(

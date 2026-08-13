@@ -12,6 +12,9 @@ import com.settlement.pacing.api.gateway.ReservationExecutionResult;
 import com.settlement.pacing.api.gateway.ReservationExecutionStatus;
 import com.settlement.pacing.api.gateway.PacingObservationGateway;
 import com.settlement.pacing.api.monitoring.PacingApiMetrics;
+import com.settlement.pacing.api.monitoring.StorageAvailabilityMonitor;
+import com.settlement.pacing.api.monitoring.StorageOperation;
+import com.settlement.pacing.api.monitoring.StorageType;
 import com.settlement.pacing.core.budget.BudgetReservation;
 import com.settlement.pacing.core.budget.Money;
 import com.settlement.pacing.core.budget.ReservationStatus;
@@ -36,6 +39,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -56,6 +60,7 @@ class BudgetReservationServiceTest {
     private BudgetReservationGateway budgetReservationGateway;
     private PacingObservationGateway pacingObservationGateway;
     private PacingApiMetrics pacingApiMetrics;
+    private StorageAvailabilityMonitor storageAvailabilityMonitor;
     private BudgetReservationService service;
     private BudgetReservationCommand command;
     private Campaign activeCampaign;
@@ -67,6 +72,8 @@ class BudgetReservationServiceTest {
         pacingObservationGateway =
                 mock(PacingObservationGateway.class);
         pacingApiMetrics = mock(PacingApiMetrics.class);
+        storageAvailabilityMonitor =
+                mock(StorageAvailabilityMonitor.class);
 
         Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
         PacingProperties properties = properties();
@@ -77,7 +84,8 @@ class BudgetReservationServiceTest {
                 pacingObservationGateway,
                 properties,
                 clock,
-                pacingApiMetrics
+                pacingApiMetrics,
+                storageAvailabilityMonitor
         );
 
         command = new BudgetReservationCommand(
@@ -148,6 +156,14 @@ class BudgetReservationServiceTest {
         assertThat(result.created()).isTrue();
         assertThat(result.reservation().reservationId())
                 .isEqualTo(RESERVATION_ID);
+        verify(storageAvailabilityMonitor, times(2)).recordSuccess(
+                StorageType.POSTGRESQL,
+                StorageOperation.RESERVATION
+        );
+        verify(storageAvailabilityMonitor).recordSuccess(
+                StorageType.REDIS,
+                StorageOperation.RESERVATION
+        );
     }
 
     @Test
@@ -176,6 +192,14 @@ class BudgetReservationServiceTest {
                 .isEqualTo(existingReservation);
         verify(budgetReservationGateway, never())
                 .reserve(any(BudgetReservation.class));
+        verify(storageAvailabilityMonitor).recordSuccess(
+                StorageType.POSTGRESQL,
+                StorageOperation.RESERVATION
+        );
+        verify(storageAvailabilityMonitor).recordSuccess(
+                StorageType.REDIS,
+                StorageOperation.RESERVATION
+        );
     }
 
     @Test

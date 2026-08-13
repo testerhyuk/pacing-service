@@ -1,5 +1,7 @@
 package com.settlement.pacing.api.error;
 
+import com.settlement.pacing.api.monitoring.StorageAvailabilityMonitor;
+import com.settlement.pacing.api.monitoring.StorageOperation;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -10,11 +12,19 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.transaction.CannotCreateTransactionException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
     private static final Logger log =
             LoggerFactory.getLogger(GlobalExceptionHandler.class);
+    private final StorageAvailabilityMonitor storageAvailabilityMonitor;
+
+    public GlobalExceptionHandler(
+            StorageAvailabilityMonitor storageAvailabilityMonitor
+    ) {
+        this.storageAvailabilityMonitor = storageAvailabilityMonitor;
+    }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ErrorResponse> handleInvalidRequest(
@@ -153,12 +163,18 @@ public class GlobalExceptionHandler {
         );
     }
 
-    @ExceptionHandler(DataAccessException.class)
+    @ExceptionHandler({
+            DataAccessException.class,
+            CannotCreateTransactionException.class
+    })
     public ResponseEntity<ErrorResponse> handleStorageUnavailable(
-            DataAccessException exception,
+            RuntimeException exception,
             HttpServletRequest request
     ) {
-        log.error("저장소 접근 중 오류가 발생했습니다", exception);
+        storageAvailabilityMonitor.recordFailure(
+                storageOperation(request.getRequestURI()),
+                exception
+        );
 
         return response(
                 HttpStatus.SERVICE_UNAVAILABLE,
@@ -166,6 +182,22 @@ public class GlobalExceptionHandler {
                 "저장소에 일시적으로 접근할 수 없습니다",
                 request
         );
+    }
+
+    private StorageOperation storageOperation(String requestUri) {
+        if (requestUri.startsWith(
+                "/internal/v1/pacing/decisions"
+        )) {
+            return StorageOperation.DECISION;
+        }
+
+        if (requestUri.startsWith(
+                "/internal/v1/budget-reservations"
+        )) {
+            return StorageOperation.RESERVATION;
+        }
+
+        return StorageOperation.ADMIN;
     }
 
     @ExceptionHandler(Exception.class)

@@ -4,6 +4,9 @@ import com.settlement.pacing.api.audit.AuditLogger;
 import com.settlement.pacing.api.config.HmacSecurityProperties;
 import com.settlement.pacing.api.error.ErrorCode;
 import com.settlement.pacing.api.monitoring.PacingApiMetrics;
+import com.settlement.pacing.api.monitoring.StorageAvailabilityMonitor;
+import com.settlement.pacing.api.monitoring.StorageOperation;
+import com.settlement.pacing.api.monitoring.StorageType;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ReadListener;
 import jakarta.servlet.ServletException;
@@ -51,6 +54,7 @@ public class HmacAuthenticationFilter
     private final AuditLogger auditLogger;
     private final SecurityErrorResponseWriter errorResponseWriter;
     private final RequestAdmissionGateway requestAdmissionGateway;
+    private final StorageAvailabilityMonitor storageAvailabilityMonitor;
 
     public HmacAuthenticationFilter(
             CanonicalRequestBuilder canonicalRequestBuilder,
@@ -60,7 +64,8 @@ public class HmacAuthenticationFilter
             PacingApiMetrics metrics,
             AuditLogger auditLogger,
             SecurityErrorResponseWriter errorResponseWriter,
-            RequestAdmissionGateway requestAdmissionGateway
+            RequestAdmissionGateway requestAdmissionGateway,
+            StorageAvailabilityMonitor storageAvailabilityMonitor
     ) {
         this.canonicalRequestBuilder = canonicalRequestBuilder;
         this.signatureVerifier = signatureVerifier;
@@ -70,6 +75,7 @@ public class HmacAuthenticationFilter
         this.auditLogger = auditLogger;
         this.errorResponseWriter = errorResponseWriter;
         this.requestAdmissionGateway = requestAdmissionGateway;
+        this.storageAvailabilityMonitor = storageAvailabilityMonitor;
     }
 
     @Override
@@ -183,11 +189,14 @@ public class HmacAuthenticationFilter
                     nonce,
                     properties.nonceTtl()
             );
+            storageAvailabilityMonitor.recordSuccess(
+                    StorageType.REDIS,
+                    StorageOperation.AUTHENTICATION
+            );
         } catch (DataAccessException exception) {
             rejectStorageUnavailable(
                     request,
                     response,
-                    "요청 허용 저장소",
                     exception
             );
             return;
@@ -356,12 +365,11 @@ public class HmacAuthenticationFilter
     private void rejectStorageUnavailable(
             HttpServletRequest request,
             HttpServletResponse response,
-            String storageName,
             DataAccessException exception
     ) throws IOException {
-        log.error(
-                "{} 연결 오류로 HMAC 인증 요청을 처리할 수 없습니다",
-                storageName,
+        storageAvailabilityMonitor.recordFailure(
+                StorageType.REDIS,
+                StorageOperation.AUTHENTICATION,
                 exception
         );
         errorResponseWriter.write(

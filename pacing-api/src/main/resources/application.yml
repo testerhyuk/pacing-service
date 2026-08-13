@@ -2,6 +2,8 @@ pacing:
   business-zone-id: Asia/Seoul
   request-time-tolerance: 60s
   rate-update-interval: 10s
+  storage-failure:
+    log-interval: ${PACING_STORAGE_FAILURE_LOG_INTERVAL:30s}
   observation:
     window: 1m
     minimum-pass-count: 20

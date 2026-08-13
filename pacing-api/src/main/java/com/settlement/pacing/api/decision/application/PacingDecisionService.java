@@ -8,6 +8,9 @@ import com.settlement.pacing.api.error.InvalidRequestException;
 import com.settlement.pacing.api.error.PacingStateUpdateException;
 import com.settlement.pacing.api.gateway.*;
 import com.settlement.pacing.api.monitoring.PacingApiMetrics;
+import com.settlement.pacing.api.monitoring.StorageAvailabilityMonitor;
+import com.settlement.pacing.api.monitoring.StorageOperation;
+import com.settlement.pacing.api.monitoring.StorageType;
 import com.settlement.pacing.core.budget.BudgetState;
 import com.settlement.pacing.core.campaign.Campaign;
 import com.settlement.pacing.core.pacing.*;
@@ -34,6 +37,7 @@ public class PacingDecisionService {
     private final Clock clock;
     private final PacingApiMetrics pacingApiMetrics;
     private final DecisionContextQueryGateway decisionContextQueryGateway;
+    private final StorageAvailabilityMonitor storageAvailabilityMonitor;
 
     public PacingDecisionResult decide(PacingDecisionCommand command) {
         Timer.Sample timerSample = pacingApiMetrics.startTimer();
@@ -139,6 +143,10 @@ public class PacingDecisionService {
                         campaignId,
                         budgetDate
                 );
+        storageAvailabilityMonitor.recordSuccess(
+                StorageType.REDIS,
+                StorageOperation.DECISION
+        );
 
         if (context.isPresent()) {
             return context.get();
@@ -183,6 +191,10 @@ public class PacingDecisionService {
                         campaignId,
                         initialPacingState
                 );
+        storageAvailabilityMonitor.recordSuccess(
+                StorageType.POSTGRESQL,
+                StorageOperation.DECISION
+        );
 
         return new DecisionContextSnapshot(
                 campaign,
