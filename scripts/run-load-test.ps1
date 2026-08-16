@@ -36,9 +36,10 @@ Assert-HttpStatus `
     -Operation "부하 테스트 전 API health check"
 
 $secret = Get-HmacSecret -ClientId "ad-server"
-$apiPort = Get-EnvironmentValue `
-    -Name "PACING_API_PORT" `
-    -DefaultValue "8080"
+$apiBaseUrl = Get-ApiBaseUrl
+$dockerNetwork = Get-EnvironmentValue `
+    -Name "PACING_K6_DOCKER_NETWORK" `
+    -DefaultValue "pacing-service_pacing-network"
 $k6Image = Get-EnvironmentValue `
     -Name "PACING_K6_IMAGE" `
     -DefaultValue "grafana/k6:latest"
@@ -56,9 +57,9 @@ Write-Host "campaign: $CampaignId"
         "run",
         "--rm",
         "--network",
-        "pacing-service_pacing-network",
+        $dockerNetwork,
         "-e",
-        "BASE_URL=http://pacing-api:8080",
+        "BASE_URL=$apiBaseUrl",
         "-e",
         "CLIENT_ID=ad-server",
         "-e",

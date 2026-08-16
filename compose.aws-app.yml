@@ -1,0 +1,93 @@
+name: pacing-service-app
+
+services:
+  pacing-api:
+    build:
+      context: .
+      dockerfile: docker/pacing-api.Dockerfile
+    container_name: pacing-api
+    environment:
+      PACING_POSTGRES_URL: jdbc:postgresql://${PACING_DATA_PRIVATE_IP:?PACING_DATA_PRIVATE_IP is required}:5432/${PACING_POSTGRES_DATABASE:-pacing}
+      PACING_POSTGRES_USERNAME: ${PACING_POSTGRES_USERNAME:-pacing}
+      PACING_POSTGRES_PASSWORD: ${PACING_POSTGRES_PASSWORD:?PACING_POSTGRES_PASSWORD is required}
+      PACING_REDIS_HOST: ${PACING_DATA_PRIVATE_IP:?PACING_DATA_PRIVATE_IP is required}
+      PACING_REDIS_PORT: 6379
+      PACING_REDIS_PASSWORD: ${PACING_REDIS_PASSWORD:?PACING_REDIS_PASSWORD is required}
+      PACING_HMAC_AD_SERVER_CURRENT_SECRET: ${PACING_HMAC_AD_SERVER_CURRENT_SECRET:?PACING_HMAC_AD_SERVER_CURRENT_SECRET is required}
+      PACING_HMAC_AUCTION_SERVER_CURRENT_SECRET: ${PACING_HMAC_AUCTION_SERVER_CURRENT_SECRET:?PACING_HMAC_AUCTION_SERVER_CURRENT_SECRET is required}
+      PACING_HMAC_OPERATION_SERVER_CURRENT_SECRET: ${PACING_HMAC_OPERATION_SERVER_CURRENT_SECRET:?PACING_HMAC_OPERATION_SERVER_CURRENT_SECRET is required}
+      PACING_RESERVATION_TTL: ${PACING_RESERVATION_TTL:-15m}
+      PACING_EWMA_ALPHA: ${PACING_EWMA_ALPHA:-0.5}
+    ports:
+      - "28080:8080"
+    restart: unless-stopped
+    networks:
+      - pacing-app-network
+
+  pacing-worker:
+    build:
+      context: .
+      dockerfile: docker/pacing-worker.Dockerfile
+    container_name: pacing-worker
+    environment:
+      PACING_POSTGRES_URL: jdbc:postgresql://${PACING_DATA_PRIVATE_IP:?PACING_DATA_PRIVATE_IP is required}:5432/${PACING_POSTGRES_DATABASE:-pacing}
+      PACING_POSTGRES_USERNAME: ${PACING_POSTGRES_USERNAME:-pacing}
+      PACING_POSTGRES_PASSWORD: ${PACING_POSTGRES_PASSWORD:?PACING_POSTGRES_PASSWORD is required}
+      PACING_REDIS_HOST: ${PACING_DATA_PRIVATE_IP:?PACING_DATA_PRIVATE_IP is required}
+      PACING_REDIS_PORT: 6379
+      PACING_REDIS_PASSWORD: ${PACING_REDIS_PASSWORD:?PACING_REDIS_PASSWORD is required}
+      PACING_KAFKA_BOOTSTRAP_SERVERS: ${PACING_DATA_PRIVATE_IP:?PACING_DATA_PRIVATE_IP is required}:9092
+      PACING_WORKER_PROCESSED_EVENT_TTL: ${PACING_WORKER_PROCESSED_EVENT_TTL:-1h}
+      PACING_WORKER_TERMINAL_RESERVATION_TTL: ${PACING_WORKER_TERMINAL_RESERVATION_TTL:-1h}
+      PACING_WORKER_KAFKA_REPLICATION_FACTOR: 1
+    ports:
+      - "8081:8081"
+    restart: unless-stopped
+    networks:
+      - pacing-app-network
+
+  prometheus:
+    image: prom/prometheus:v3.10.0
+    container_name: pacing-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./docker/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - pacing-prometheus-data:/prometheus
+    restart: unless-stopped
+    networks:
+      - pacing-app-network
+
+  grafana:
+    image: grafana/grafana:13.1.0
+    container_name: pacing-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: ${PACING_GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${PACING_GRAFANA_ADMIN_PASSWORD:?PACING_GRAFANA_ADMIN_PASSWORD is required}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      TZ: UTC
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - pacing-grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    networks:
+      - pacing-app-network
+
+volumes:
+  pacing-prometheus-data:
+  pacing-grafana-data:
+
+networks:
+  pacing-app-network:
+    driver: bridge

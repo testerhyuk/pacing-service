@@ -21,9 +21,11 @@ import java.util.concurrent.atomic.AtomicReference;
 @Component
 @RequiredArgsConstructor
 public class PacingApiMetrics {
+
     private static final String UNKNOWN = "UNKNOWN";
 
     private final MeterRegistry meterRegistry;
+
     private final ConcurrentMap<PacingStrategy, RateUpdateMeters>
             rateUpdateMeters = new ConcurrentHashMap<>();
 
@@ -86,7 +88,8 @@ public class PacingApiMetrics {
             return;
         }
 
-        double intervalSeconds = updateInterval.toMillis() / 1_000.0;
+        double intervalSeconds =
+                updateInterval.toMillis() / 1_000.0;
 
         if (intervalSeconds <= 0.0) {
             return;
@@ -100,29 +103,40 @@ public class PacingApiMetrics {
         int intervalCount = observation.intervalCount();
 
         double estimatedDecisionCountPerInterval =
-                observation.estimatedDecisionCountPerInterval(pacingProperties.ewmaAlpha());
+                observation.estimatedDecisionCountPerInterval(
+                        pacingProperties.ewmaAlpha()
+                );
 
         double decisionRate =
                 estimatedDecisionCountPerInterval / intervalSeconds;
-        double passRate = observation.decisionCount() == 0L
-                ? 0.0
-                : (double) observation.passCount()
+
+        double passRate =
+                observation.decisionCount() == 0L
+                        ? 0.0
+                        : (double) observation.passCount()
                         / observation.decisionCount();
-        double reservedAmountPerInterval = intervalCount == 0
-                ? 0.0
-                : (double) observation.reservedAmount().amount()
+
+        double reservedAmountPerInterval =
+                intervalCount == 0
+                        ? 0.0
+                        : (double) observation.reservedAmount().amount()
                         / intervalCount;
 
         meters.pacingRate().set(pacingRate);
         meters.decisionRate().set(decisionRate);
         meters.passRate().set(passRate);
         meters.intervalCount().set((double) intervalCount);
+
         meters.reservedAmountPerInterval().set(
                 reservedAmountPerInterval
         );
+
         meters.fullPassAmountPerInterval().set(
-                observation.estimatedFullPassAmountPerInterval(pacingProperties.ewmaAlpha())
+                observation.estimatedFullPassAmountPerInterval(
+                        pacingProperties.ewmaAlpha()
+                )
         );
+
         meters.updateCounter().increment();
     }
 
@@ -198,55 +212,80 @@ public class PacingApiMetrics {
             PacingStrategy strategy
     ) {
         String strategyName = strategy.name();
+        String ewmaAlpha = ewmaAlphaTag();
 
         return new RateUpdateMeters(
                 gauge(
                         "pacing.api.rate_update.pacing_rate",
                         "Latest PASS rate applied during a pacing refresh",
-                        strategyName
+                        strategyName,
+                        ewmaAlpha
                 ),
+
                 gauge(
                         "pacing.api.rate_update.decision_rate",
                         "Decision requests per second seen in the observation window",
-                        strategyName
+                        strategyName,
+                        ewmaAlpha
                 ),
+
                 gauge(
                         "pacing.api.rate_update.pass_rate",
                         "PASS ratio seen in the observation window",
-                        strategyName
+                        strategyName,
+                        ewmaAlpha
                 ),
+
                 gauge(
                         "pacing.api.rate_update.interval_count",
                         "Number of populated intervals in the observation window",
-                        strategyName
+                        strategyName,
+                        ewmaAlpha
                 ),
+
                 gauge(
                         "pacing.api.rate_update.reserved_amount_per_interval",
                         "Reserved amount per observed interval",
-                        strategyName
+                        strategyName,
+                        ewmaAlpha
                 ),
+
                 gauge(
                         "pacing.api.rate_update.full_pass_amount_per_interval",
                         "Estimated reservation amount if every observed decision passed",
-                        strategyName
+                        strategyName,
+                        ewmaAlpha
                 ),
+
                 Counter.builder("pacing.api.rate_update")
                         .description("Pacing rate refresh count")
                         .tag("strategy", strategyName)
+                        .tag("ewma_alpha", ewmaAlpha)
                         .register(meterRegistry)
         );
+    }
+
+    private String ewmaAlphaTag() {
+        return Double.toString(pacingProperties.ewmaAlpha());
     }
 
     private AtomicReference<Double> gauge(
             String name,
             String description,
-            String strategy
+            String strategy,
+            String ewmaAlpha
     ) {
-        AtomicReference<Double> value = new AtomicReference<>(0.0);
+        AtomicReference<Double> value =
+                new AtomicReference<>(0.0);
 
-        Gauge.builder(name, value, current -> current.get())
+        Gauge.builder(
+                        name,
+                        value,
+                        current -> current.get()
+                )
                 .description(description)
                 .tag("strategy", strategy)
+                .tag("ewma_alpha", ewmaAlpha)
                 .register(meterRegistry);
 
         return value;

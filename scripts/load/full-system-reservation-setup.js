@@ -25,7 +25,8 @@ const reservationVUs =
 const reservationMaxVUs =
     Number(__ENV.MAX_VUS || 200);
 
-const maxRequestAttempts = 4;
+const maxRequestAttempts =
+    Number(__ENV.MAX_REQUEST_ATTEMPTS || 8);
 const retryableStatuses =
     new Set([0, 429, 500, 502, 503, 504]);
 
@@ -71,6 +72,15 @@ if (
 ) {
     throw new Error(
         `Invalid MAX_VUS: ${__ENV.MAX_VUS}`
+    );
+}
+
+if (
+    !Number.isInteger(maxRequestAttempts) ||
+    maxRequestAttempts <= 0
+) {
+    throw new Error(
+        `Invalid MAX_REQUEST_ATTEMPTS: ${__ENV.MAX_REQUEST_ATTEMPTS}`
     );
 }
 
@@ -149,13 +159,15 @@ function waitForRateSlot() {
             scenarioStartedAt + vuOffsetMilliseconds;
     } else {
         /*
-         * Always leave one full per-VU interval after a completed request.
-         * Do not catch up missed slots with a burst.
+         * 응답 시간까지 요청 간격에 더하면 설정한 RATE보다 실제 처리량이
+         * 낮아진다. 이전 예약 시각을 기준으로 다음 슬롯을 계산하되,
+         * 이미 지난 슬롯은 현재 시각까지만 당겨 밀린 요청이 연속으로
+         * 폭주하지 않게 한다.
          */
         nextRequestAt =
             Math.max(
                 nextRequestAt + intervalMilliseconds,
-                Date.now() + intervalMilliseconds
+                Date.now()
             );
     }
 
@@ -230,7 +242,20 @@ function sendReservation({
             return response;
         }
 
-        sleep(0.1 * Math.pow(2, attempt - 1));
+        /*
+         * Redis가 순간적으로 503을 반환하더라도 동일 예약 ID를
+         * 다시 보내면 서버의 멱등 처리로 중복 차감되지 않는다.
+         * 최대 대기 시간을 제한하고 요청별 jitter를 더해
+         * 재시도가 한 시점에 다시 몰리지 않게 한다.
+         */
+        const backoffSeconds = Math.min(
+            0.1 * Math.pow(2, attempt - 1),
+            2
+        );
+        const jitterSeconds =
+            ((index % 10) + 1) / 100;
+
+        sleep(backoffSeconds + jitterSeconds);
     }
 
     return response;

@@ -41,12 +41,12 @@
           "refId": "A"
         },
         {
-          "expr": "max by (strategy) (pacing_api_rate_update_decision_rate{application=\"pacing-api\"})",
-          "legendFormat": "observed RPS / {{strategy}}",
+          "expr": "max by (ewma_alpha) (pacing_api_rate_update_decision_rate{application=\"pacing-api\"})",
+          "legendFormat": "EWMA α={{ewma_alpha}} observed RPS",
           "refId": "B"
         }
       ],
-      "title": "Actual traffic vs observed traffic",
+      "title": "Actual traffic vs EWMA observed traffic",
       "type": "timeseries"
     },
     {
@@ -80,22 +80,17 @@
       },
       "targets": [
         {
-          "expr": "max by (strategy) (pacing_api_rate_update_pacing_rate{application=\"pacing-api\"})",
-          "legendFormat": "applied PASS rate / {{strategy}}",
+          "expr": "max by (ewma_alpha) (pacing_api_rate_update_pacing_rate{application=\"pacing-api\"})",
+          "legendFormat": "EWMA α={{ewma_alpha}} applied PASS rate",
           "refId": "A"
         },
         {
           "expr": "sum(rate(pacing_api_decision_seconds_count{application=\"pacing-api\",outcome=\"SUCCESS\",decision=\"PASS\"}[10s])) / clamp_min(sum(rate(pacing_api_decision_seconds_count{application=\"pacing-api\",outcome=\"SUCCESS\"}[10s])), 0.001)",
           "legendFormat": "actual PASS ratio",
           "refId": "B"
-        },
-        {
-          "expr": "max by (strategy) (pacing_api_rate_update_pass_rate{application=\"pacing-api\"})",
-          "legendFormat": "observed PASS ratio / {{strategy}}",
-          "refId": "C"
         }
       ],
-      "title": "PASS rate response",
+      "title": "Applied PASS rate by alpha",
       "type": "timeseries"
     },
     {
@@ -105,13 +100,13 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "short"
+          "unit": "none"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 8,
+        "h": 9,
+        "w": 12,
         "x": 0,
         "y": 9
       },
@@ -129,17 +124,17 @@
       },
       "targets": [
         {
-          "expr": "max by (strategy) (pacing_api_rate_update_interval_count{application=\"pacing-api\"})",
-          "legendFormat": "populated intervals / {{strategy}}",
+          "expr": "max by (ewma_alpha) (pacing_api_rate_update_full_pass_amount_per_interval{application=\"pacing-api\"})",
+          "legendFormat": "EWMA α={{ewma_alpha}} estimated full-pass amount",
           "refId": "A"
         },
         {
-          "expr": "sum by (strategy) (increase(pacing_api_rate_update_total{application=\"pacing-api\"}[1m]))",
-          "legendFormat": "rate updates/min / {{strategy}}",
+          "expr": "max by (ewma_alpha) (pacing_api_rate_update_reserved_amount_per_interval{application=\"pacing-api\"})",
+          "legendFormat": "EWMA α={{ewma_alpha}} reserved amount / interval",
           "refId": "B"
         }
       ],
-      "title": "Observation window and refreshes",
+      "title": "Estimated full-pass amount by alpha",
       "type": "timeseries"
     },
     {
@@ -149,14 +144,14 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "none"
+          "unit": "short"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 16,
-        "x": 8,
+        "h": 9,
+        "w": 12,
+        "x": 12,
         "y": 9
       },
       "id": 4,
@@ -173,17 +168,17 @@
       },
       "targets": [
         {
-          "expr": "max by (strategy) (pacing_api_rate_update_reserved_amount_per_interval{application=\"pacing-api\"})",
-          "legendFormat": "reserved amount / observed interval / {{strategy}}",
+          "expr": "max by (ewma_alpha) (pacing_api_rate_update_interval_count{application=\"pacing-api\"})",
+          "legendFormat": "EWMA α={{ewma_alpha}} populated intervals",
           "refId": "A"
         },
         {
-          "expr": "max by (strategy) (pacing_api_rate_update_full_pass_amount_per_interval{application=\"pacing-api\"})",
-          "legendFormat": "estimated amount at 100% PASS / {{strategy}}",
+          "expr": "sum by (ewma_alpha) (increase(pacing_api_rate_update_total{application=\"pacing-api\"}[1m]))",
+          "legendFormat": "EWMA α={{ewma_alpha}} updates/min",
           "refId": "B"
         }
       ],
-      "title": "Observed reservation capacity",
+      "title": "Observation intervals and refreshes",
       "type": "timeseries"
     },
     {
@@ -192,17 +187,17 @@
         "uid": "-- Dashboard --"
       },
       "gridPos": {
-        "h": 5,
+        "h": 7,
         "w": 24,
         "x": 0,
         "y": 17
       },
       "id": 5,
       "options": {
-        "content": "### How to read this test\n\nRun `run-traffic-response-test.ps1` to send **50 RPS → 300 RPS → 50 RPS** traffic. The first panel compares actual incoming traffic with the one-minute observation used by the current calculator. If the observed line rises after the spike and falls after recovery with delay, that is the averaging lag we are going to improve. The second panel shows how that delay reaches the applied PASS rate.\n\nAll algorithm gauges are tagged only by `strategy`, never by campaign ID, so adding this dashboard does not create an unbounded Prometheus time-series count.",
+        "content": "### EWMA alpha comparison test\n\nRun `run-ewma-alpha-comparison.ps1`. The script runs the same traffic scenario for each alpha in sequence (default: **0.2, 0.3, 0.5, 0.7**) and restarts only `pacing-api` between runs. Prometheus keeps the historical samples, while the `ewma_alpha` label keeps the runs separated.\n\n**Scenario**\n- Warmup: 50 RPS for 60s\n- Spike: 300 RPS for 60s\n- Recovery: 50 RPS for 90s\n\n**How to choose alpha**\n1. Check how quickly the EWMA observed RPS follows the 300 RPS spike.\n2. Check how quickly it falls back after recovery.\n3. Check whether the applied PASS rate oscillates unnecessarily.\n4. Prefer the smallest alpha that reacts fast enough without excessive oscillation.\n\nThe dashboard is intentionally based on `ewma_alpha`, not campaign ID, so the comparison does not create high-cardinality campaign-labelled series.",
         "mode": "markdown"
       },
-      "title": "Test guide",
+      "title": "How to run and interpret",
       "type": "text"
     }
   ],
@@ -210,18 +205,17 @@
   "schemaVersion": 41,
   "tags": [
     "pacing",
-    "traffic"
+    "traffic",
+    "ewma"
   ],
   "templating": {
     "list": []
   },
   "time": {
-    "from": "now-15m",
+    "from": "now-45m",
     "to": "now"
   },
-  "timepicker": {},
-  "timezone": "browser",
-  "title": "Pacing traffic response",
+  "title": "pacing-traffic-response",
   "uid": "pacing-traffic-response",
   "version": 1
 }

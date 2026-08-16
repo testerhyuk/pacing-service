@@ -36,6 +36,7 @@ public class PacingWorkerMetrics {
                         "overBudget",
                         Boolean.toString(result.overBudget())
                 )
+                .tag("reason", "NONE")
                 .register(meterRegistry));
 
         if (result.applied()) {
@@ -57,6 +58,7 @@ public class PacingWorkerMetrics {
         sample.stop(Timer.builder("pacing.worker.billing")
                 .tag("eventType", "UNKNOWN")
                 .tag("status", "FAILURE")
+                .tag("overBudget", "UNKNOWN")
                 .tag(
                         "reason",
                         exception.getClass().getSimpleName()

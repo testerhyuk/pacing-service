@@ -9,6 +9,7 @@ import com.settlement.pacing.worker.error.RetryableBillingEventException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.transaction.CannotCreateTransactionException;
 
 import java.time.Instant;
 
@@ -98,6 +99,24 @@ class BillingEventListenerTest {
         assertThatThrownBy(() ->
                 listener.consume(message, "reservation-1")
         ).isInstanceOf(RetryableBillingEventException.class);
+    }
+
+    @Test
+    void 트랜잭션_시작_실패는_Kafka_재시도_예외로_변환한다() {
+        BillingEventMessage message = message();
+        CannotCreateTransactionException failure =
+                new CannotCreateTransactionException(
+                        "connection pool exhausted"
+                );
+        doThrow(failure)
+                .when(handler)
+                .handle(org.mockito.ArgumentMatchers.any());
+
+        assertThatThrownBy(() ->
+                listener.consume(message, "reservation-1")
+        )
+                .isInstanceOf(RetryableBillingEventException.class)
+                .hasCause(failure);
     }
 
     private BillingEventMessage message() {

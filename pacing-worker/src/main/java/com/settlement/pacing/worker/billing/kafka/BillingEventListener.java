@@ -14,6 +14,7 @@ import org.springframework.kafka.retrytopic.TopicSuffixingStrategy;
 import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.CannotCreateTransactionException;
 
 import static org.springframework.kafka.support.KafkaHeaders.RECEIVED_KEY;
 
@@ -80,7 +81,8 @@ public class BillingEventListener {
 
         try {
             handler.handle(event);
-        } catch (DataAccessException exception) {
+        } catch (DataAccessException |
+                 CannotCreateTransactionException exception) {
             throw new RetryableBillingEventException(
                     "과금 처리 저장소에 일시적으로 접근할 수 없습니다",
                     exception
