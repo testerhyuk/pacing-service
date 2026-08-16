@@ -75,13 +75,16 @@ public class PacingDecisionService {
 
             Rate sampleRate = sampleRateGenerator.generate(command.requestId(), command.campaignId());
 
-            PacingObservation observation =
+            boolean pacingRateUpdateDue =
                     pacingStateSnapshot.pacingState()
                             .shouldUpdateAt(
                                     processingAt,
                                     pacingProperties
                                             .rateUpdateInterval()
-                            )
+                            );
+
+            PacingObservation observation =
+                    pacingRateUpdateDue
                             ? pacingObservationGateway.recent(
                                     command.campaignId(),
                                     processingAt
@@ -112,6 +115,15 @@ public class PacingDecisionService {
                         result.campaignId(),
                         result.decision(),
                         processingAt
+                );
+            }
+
+            if (pacingRateUpdateDue) {
+                pacingApiMetrics.recordPacingRateUpdate(
+                        campaign.pacingStrategy(),
+                        observation,
+                        result.pacingRate(),
+                        pacingProperties.rateUpdateInterval()
                 );
             }
 
@@ -242,7 +254,8 @@ public class PacingDecisionService {
                     currentBudgetState,
                     currentSnapshot.pacingState(),
                     sampleRate,
-                    observation
+                    observation,
+                    pacingProperties.ewmaAlpha()
             );
 
             if (pacingResult.pacingState().equals(

@@ -10,6 +10,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
 
 class CapacityBasedPacingRateCalculatorTest {
+    private static final double EWMA_ALPHA = 0.5;
+
     private final CapacityBasedPacingRateCalculator calculator =
             new CapacityBasedPacingRateCalculator(
                     20L,
@@ -35,7 +37,8 @@ class CapacityBasedPacingRateCalculatorTest {
                         400L,
                         80L,
                         80_000L
-                )
+                ),
+                EWMA_ALPHA
         );
 
         // 남은 70만 원의 4%인 2만 8천 원을,
@@ -63,7 +66,8 @@ class CapacityBasedPacingRateCalculatorTest {
                         400L,
                         80L,
                         80_000L
-                )
+                ),
+                EWMA_ALPHA
         );
 
         // 오늘 남은 1만 원 ÷ 100% PASS 예상액 20만 원
@@ -92,7 +96,8 @@ class CapacityBasedPacingRateCalculatorTest {
                         10L,
                         1L,
                         1_000L
-                )
+                ),
+                EWMA_ALPHA
         );
 
         assertThat(result).isEqualTo(currentRate);
@@ -115,7 +120,8 @@ class CapacityBasedPacingRateCalculatorTest {
                         100L,
                         0L,
                         0L
-                )
+                ),
+                EWMA_ALPHA
         );
 
         assertThat(result.value()).isCloseTo(
@@ -149,7 +155,8 @@ class CapacityBasedPacingRateCalculatorTest {
                         100L,
                         10L,
                         1_000L
-                )
+                ),
+                EWMA_ALPHA
         );
 
         assertThat(result.value()).isCloseTo(
@@ -170,7 +177,8 @@ class CapacityBasedPacingRateCalculatorTest {
                 ),
                 Rate.full(),
                 Rate.full(),
-                PacingObservation.empty()
+                PacingObservation.empty(),
+                EWMA_ALPHA
         );
 
         assertThat(result).isEqualTo(Rate.full());
@@ -183,11 +191,14 @@ class CapacityBasedPacingRateCalculatorTest {
             long reservedAmount
     ) {
         return new PacingObservation(
-                1,
-                decisionCount,
-                passCount,
-                reservationCount,
-                new Money(reservedAmount)
+                java.util.List.of(
+                        new PacingObservation.Interval(
+                                decisionCount,
+                                passCount,
+                                reservationCount,
+                                new Money(reservedAmount)
+                        )
+                )
         );
     }
 

@@ -106,15 +106,15 @@ public class RedisPacingObservationAdapter
             );
         }
 
-        long decisionCount = 0L;
-        long passCount = 0L;
-        long reservationCount = 0L;
-        long reservedAmount = 0L;
-        int observedIntervalCount = 0;
+        List<PacingObservation.Interval> intervals =
+                new ArrayList<>(observationIntervalCount);
+        boolean hasObservation = false;
 
-        for (int index = 0;
-             index < values.size();
-             index += VALUES_PER_INTERVAL) {
+        // Redis의 keys는 최신 구간부터 오래된 구간 순서이므로
+        // EWMA가 오래된 값 -> 최신 값 순으로 계산할 수 있게 역순으로 저장한다.
+        for (int index = values.size() - VALUES_PER_INTERVAL;
+             index >= 0;
+             index -= VALUES_PER_INTERVAL) {
             long intervalDecisionCount =
                     parseLong(values.get(index));
             long intervalPassCount =
@@ -124,43 +124,30 @@ public class RedisPacingObservationAdapter
             long intervalReservedAmount =
                     parseLong(values.get(index + 3));
 
-            decisionCount = Math.addExact(
-                    decisionCount,
-                    intervalDecisionCount
-            );
-            passCount = Math.addExact(
-                    passCount,
-                    intervalPassCount
-            );
-            reservationCount = Math.addExact(
-                    reservationCount,
-                    intervalReservationCount
-            );
-            reservedAmount = Math.addExact(
-                    reservedAmount,
-                    intervalReservedAmount
-            );
-
             if (intervalDecisionCount != 0L
                     || intervalPassCount != 0L
                     || intervalReservationCount != 0L
                     || intervalReservedAmount != 0L) {
-                observedIntervalCount =
-                        index / VALUES_PER_INTERVAL + 1;
+                hasObservation = true;
             }
+
+            // 0인 bucket도 버리지 않는다.
+            // traffic이 없었던 구간도 EWMA가 과거 traffic을 잊어가게 만드는 데 필요하다.
+            intervals.add(
+                    new PacingObservation.Interval(
+                            intervalDecisionCount,
+                            intervalPassCount,
+                            intervalReservationCount,
+                            new Money(intervalReservedAmount)
+                    )
+            );
         }
 
-        if (observedIntervalCount == 0) {
+        if (!hasObservation) {
             return PacingObservation.empty();
         }
 
-        return new PacingObservation(
-                observedIntervalCount,
-                decisionCount,
-                passCount,
-                reservationCount,
-                new Money(reservedAmount)
-        );
+        return new PacingObservation(intervals);
     }
 
     @Override

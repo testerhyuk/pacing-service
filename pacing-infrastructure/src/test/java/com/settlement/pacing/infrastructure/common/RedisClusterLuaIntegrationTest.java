@@ -267,8 +267,10 @@ class RedisClusterLuaIntegrationTest {
                     --dir /cluster/$port \
                     --logfile /cluster/$port/redis.log
                 done
-                until redis-cli -p 7000 ping >/dev/null 2>&1; do
-                  sleep 1
+                for port in 7000 7001 7002; do
+                  until redis-cli -p $port ping >/dev/null 2>&1; do
+                    sleep 1
+                  done
                 done
                 redis-cli --cluster create \
                   127.0.0.1:7000 \

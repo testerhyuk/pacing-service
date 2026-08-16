@@ -42,7 +42,8 @@ class PacingPropertiesTest {
                 Duration.ofMinutes(5),
                 -1,
                 validInitialRate(),
-                validPeak()
+                validPeak(),
+                0.5
         );
 
         assertThat(validator.validate(properties))
@@ -63,7 +64,8 @@ class PacingPropertiesTest {
                 Duration.ZERO,
                 3,
                 validInitialRate(),
-                validPeak()
+                validPeak(),
+                0.5
         )).isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -81,7 +83,8 @@ class PacingPropertiesTest {
                         0.5,
                         1.1
                 ),
-                validPeak()
+                validPeak(),
+                0.5
         );
 
         assertThat(validator.validate(properties))
@@ -102,7 +105,8 @@ class PacingPropertiesTest {
                 Duration.ofMinutes(5),
                 3,
                 validInitialRate(),
-                validPeak()
+                validPeak(),
+                0.5
         );
 
         assertThat(validator.validate(properties))
@@ -151,7 +155,8 @@ class PacingPropertiesTest {
                 Duration.ofMinutes(5),
                 3,
                 validInitialRate(),
-                validPeak()
+                validPeak(),
+                0.5
         )).isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -171,7 +176,8 @@ class PacingPropertiesTest {
                 Duration.ofMinutes(5),
                 3,
                 validInitialRate(),
-                validPeak()
+                validPeak(),
+                0.5
         )).isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -184,7 +190,8 @@ class PacingPropertiesTest {
                 Duration.ofMinutes(5),
                 3,
                 validInitialRate(),
-                validPeak()
+                validPeak(),
+                0.5
         );
     }
 

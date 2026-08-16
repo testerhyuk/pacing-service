@@ -18,6 +18,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.within;
 
 class PacingEngineTest {
+    private static final double EWMA_ALPHA = 0.5;
+
     @Test
     void 캠페인이_활성_상태가_아니면_BLOCK한다() {
         PacingEngine engine = createEngine();
@@ -54,7 +56,9 @@ class PacingEngineTest {
                 campaign,
                 budgetState,
                 pacingState,
-                new Rate(0.1)
+                new Rate(0.1),
+                PacingObservation.empty(),
+                EWMA_ALPHA
         );
 
         assertThat(result.decision().decisionType()).isEqualTo(DecisionType.BLOCK);
@@ -98,7 +102,9 @@ class PacingEngineTest {
                 campaign,
                 budgetState,
                 pacingState,
-                new Rate(0.1)
+                new Rate(0.1),
+                PacingObservation.empty(),
+                EWMA_ALPHA
         );
 
         assertThat(result.decision().decisionType()).isEqualTo(DecisionType.BLOCK);
@@ -142,7 +148,9 @@ class PacingEngineTest {
                 campaign,
                 budgetState,
                 pacingState,
-                new Rate(0.1)
+                new Rate(0.1),
+                PacingObservation.empty(),
+                EWMA_ALPHA
         );
 
         assertThat(result.decision().decisionType()).isEqualTo(DecisionType.BLOCK);
@@ -186,7 +194,9 @@ class PacingEngineTest {
                 campaign,
                 budgetState,
                 pacingState,
-                new Rate(0.1)
+                new Rate(0.1),
+                PacingObservation.empty(),
+                EWMA_ALPHA
         );
 
         assertThat(result.decision().decisionType()).isEqualTo(DecisionType.BLOCK);
@@ -231,7 +241,8 @@ class PacingEngineTest {
                 budgetState,
                 pacingState,
                 new Rate(0.05),
-                observation()
+                observation(),
+                EWMA_ALPHA
         );
 
         assertThat(result.decision().decisionType()).isEqualTo(DecisionType.PASS);
@@ -295,7 +306,8 @@ class PacingEngineTest {
                 budgetState,
                 pacingState,
                 new Rate(0.7),
-                observation()
+                observation(),
+                EWMA_ALPHA
         );
 
         assertThat(result.decision().decisionType()).isEqualTo(DecisionType.BLOCK);
@@ -349,7 +361,9 @@ class PacingEngineTest {
                 campaign,
                 budgetState,
                 pacingState,
-                new Rate(0.51)
+                new Rate(0.51),
+                PacingObservation.empty(),
+                EWMA_ALPHA
         );
 
         assertThat(result.decision().decisionType()).isEqualTo(DecisionType.BLOCK);
@@ -404,7 +418,9 @@ class PacingEngineTest {
                         campaign,
                         budgetState,
                         pacingState,
-                        new Rate(0.1)
+                        new Rate(0.1),
+                        PacingObservation.empty(),
+                        EWMA_ALPHA
                 )
         )
                 .isInstanceOf(IllegalArgumentException.class)
@@ -449,7 +465,9 @@ class PacingEngineTest {
                         campaign,
                         budgetState,
                         pacingState,
-                        new Rate(0.1)
+                        new Rate(0.1),
+                        PacingObservation.empty(),
+                        EWMA_ALPHA
                 )
         )
                 .isInstanceOf(IllegalArgumentException.class)
@@ -491,7 +509,9 @@ class PacingEngineTest {
                 campaign,
                 budgetState,
                 pacingState,
-                new Rate(0.99)
+                new Rate(0.99),
+                PacingObservation.empty(),
+                EWMA_ALPHA
         );
 
         assertThat(result.decision().decisionType())
@@ -541,7 +561,8 @@ class PacingEngineTest {
                 budgetState,
                 pacingState,
                 new Rate(0.3),
-                observation()
+                observation(),
+                EWMA_ALPHA
         );
 
         double expectedPacingRate = 1.0 / 3.0;
@@ -607,11 +628,14 @@ class PacingEngineTest {
 
     private PacingObservation observation() {
         return new PacingObservation(
-                1,
-                100L,
-                100L,
-                10L,
-                new Money(100L)
+                java.util.List.of(
+                        new PacingObservation.Interval(
+                                100L,
+                                100L,
+                                10L,
+                                new Money(100L)
+                        )
+                )
         );
     }
 }

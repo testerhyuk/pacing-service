@@ -8,6 +8,7 @@ public interface PacingRateCalculator {
             BudgetState budgetState,
             Rate currentTargetSpendRate,
             Rate nextTargetSpendRate,
-            PacingObservation observation
+            PacingObservation observation,
+            double ewmaAlpha
     );
 }

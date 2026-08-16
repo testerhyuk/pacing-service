@@ -45,25 +45,9 @@ public class PacingEngine {
             Campaign campaign,
             BudgetState budgetState,
             PacingState pacingState,
-            Rate sampleRate
-    ) {
-        return decide(
-                request,
-                campaign,
-                budgetState,
-                pacingState,
-                sampleRate,
-                PacingObservation.empty()
-        );
-    }
-
-    public PacingResult decide(
-            PacingRequest request,
-            Campaign campaign,
-            BudgetState budgetState,
-            PacingState pacingState,
             Rate sampleRate,
-            PacingObservation observation
+            PacingObservation observation,
+            double ewmaAlpha
     ) {
         if (request == null
                 ||campaign == null
@@ -150,7 +134,8 @@ public class PacingEngine {
                             budgetState,
                             targetSpendRate,
                             nextTargetSpendRate,
-                            observation
+                            observation,
+                            ewmaAlpha
                     );
 
             nextPacingState = new PacingState(

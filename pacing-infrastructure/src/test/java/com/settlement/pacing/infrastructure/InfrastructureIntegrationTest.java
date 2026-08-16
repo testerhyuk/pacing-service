@@ -71,7 +71,8 @@ import static org.mockito.Mockito.*;
                 "pacing.security.hmac.nonce-ttl=2m",
                 "pacing.security.hmac.max-request-body-bytes=65536",
                 "pacing.security.hmac.clients.test-client.current-secret-key=0123456789abcdef0123456789abcdef",
-                "pacing.security.hmac.clients.test-client.permissions[0]=PACING_DECIDE"
+                "pacing.security.hmac.clients.test-client.permissions[0]=PACING_DECIDE",
+                "pacing.ewma-alpha=0.5"
         }
 )
 class InfrastructureIntegrationTest {
@@ -79,6 +80,8 @@ class InfrastructureIntegrationTest {
             Instant.parse("2026-07-25T00:00:00Z");
     private static final LocalDate BUDGET_DATE =
             LocalDate.of(2026, 7, 25);
+
+    private static final double EWMA_ALPHA = 0.5;
 
     @Container
     static final PostgreSQLContainer<?> POSTGRES =
@@ -421,15 +424,15 @@ class InfrastructureIntegrationTest {
                         observedAt
                 );
 
-        assertThat(observation.intervalCount()).isEqualTo(1);
+        assertThat(observation.intervalCount()).isEqualTo(6);
         assertThat(observation.decisionCount()).isEqualTo(100L);
         assertThat(observation.passCount()).isEqualTo(40L);
         assertThat(observation.reservationCount()).isEqualTo(8L);
         assertThat(observation.reservedAmount())
                 .isEqualTo(new Money(8_000L));
         assertThat(
-                observation.estimatedFullPassAmountPerInterval()
-        ).isEqualTo(20_000.0);
+                observation.estimatedFullPassAmountPerInterval(EWMA_ALPHA)
+        ).isEqualTo(10_000.0);
     }
 
     @Test

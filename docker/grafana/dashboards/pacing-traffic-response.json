@@ -1,0 +1,227 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(pacing_api_decision_seconds_count{application=\"pacing-api\",outcome=\"SUCCESS\"}[10s]))",
+          "legendFormat": "actual incoming RPS",
+          "refId": "A"
+        },
+        {
+          "expr": "max by (strategy) (pacing_api_rate_update_decision_rate{application=\"pacing-api\"})",
+          "legendFormat": "observed RPS / {{strategy}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Actual traffic vs observed traffic",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "id": 2,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "max by (strategy) (pacing_api_rate_update_pacing_rate{application=\"pacing-api\"})",
+          "legendFormat": "applied PASS rate / {{strategy}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(pacing_api_decision_seconds_count{application=\"pacing-api\",outcome=\"SUCCESS\",decision=\"PASS\"}[10s])) / clamp_min(sum(rate(pacing_api_decision_seconds_count{application=\"pacing-api\",outcome=\"SUCCESS\"}[10s])), 0.001)",
+          "legendFormat": "actual PASS ratio",
+          "refId": "B"
+        },
+        {
+          "expr": "max by (strategy) (pacing_api_rate_update_pass_rate{application=\"pacing-api\"})",
+          "legendFormat": "observed PASS ratio / {{strategy}}",
+          "refId": "C"
+        }
+      ],
+      "title": "PASS rate response",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 9
+      },
+      "id": 3,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "max by (strategy) (pacing_api_rate_update_interval_count{application=\"pacing-api\"})",
+          "legendFormat": "populated intervals / {{strategy}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (strategy) (increase(pacing_api_rate_update_total{application=\"pacing-api\"}[1m]))",
+          "legendFormat": "rate updates/min / {{strategy}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Observation window and refreshes",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 8,
+        "y": 9
+      },
+      "id": 4,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "max by (strategy) (pacing_api_rate_update_reserved_amount_per_interval{application=\"pacing-api\"})",
+          "legendFormat": "reserved amount / observed interval / {{strategy}}",
+          "refId": "A"
+        },
+        {
+          "expr": "max by (strategy) (pacing_api_rate_update_full_pass_amount_per_interval{application=\"pacing-api\"})",
+          "legendFormat": "estimated amount at 100% PASS / {{strategy}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Observed reservation capacity",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "dashboard",
+        "uid": "-- Dashboard --"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 24,
+        "x": 0,
+        "y": 17
+      },
+      "id": 5,
+      "options": {
+        "content": "### How to read this test\n\nRun `run-traffic-response-test.ps1` to send **50 RPS → 300 RPS → 50 RPS** traffic. The first panel compares actual incoming traffic with the one-minute observation used by the current calculator. If the observed line rises after the spike and falls after recovery with delay, that is the averaging lag we are going to improve. The second panel shows how that delay reaches the applied PASS rate.\n\nAll algorithm gauges are tagged only by `strategy`, never by campaign ID, so adding this dashboard does not create an unbounded Prometheus time-series count.",
+        "mode": "markdown"
+      },
+      "title": "Test guide",
+      "type": "text"
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 41,
+  "tags": [
+    "pacing",
+    "traffic"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Pacing traffic response",
+  "uid": "pacing-traffic-response",
+  "version": 1
+}

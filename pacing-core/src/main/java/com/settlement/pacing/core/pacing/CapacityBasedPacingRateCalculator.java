@@ -41,7 +41,8 @@ public class CapacityBasedPacingRateCalculator
             BudgetState budgetState,
             Rate currentTargetSpendRate,
             Rate nextTargetSpendRate,
-            PacingObservation observation
+            PacingObservation observation,
+            double ewmaAlpha
     ) {
         if (currentPacingRate == null
                 || budgetState == null
@@ -95,7 +96,9 @@ public class CapacityBasedPacingRateCalculator
         }
 
         double fullPassAmount =
-                observation.estimatedFullPassAmountPerInterval();
+                observation.estimatedFullPassAmountPerInterval(
+                        ewmaAlpha
+                );
 
         if (fullPassAmount <= 0.0) {
             return explore(currentPacingRate);

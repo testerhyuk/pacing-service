@@ -24,7 +24,10 @@ public record PacingProperties(
         @NotNull Duration reservationTtl,
         @Min(0) int stateUpdateMaxRetries,
         @NotNull @Valid InitialRate initialRate,
-        @NotNull @Valid Peak peak
+        @NotNull @Valid Peak peak,
+        @DecimalMin(value = "0.0", inclusive = false)
+        @DecimalMax("1.0")
+        double ewmaAlpha
 ) {
     public PacingProperties {
         validatePositiveDuration(

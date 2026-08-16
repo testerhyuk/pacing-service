@@ -141,7 +141,8 @@ class PacingDecisionServiceTest {
                 eq(budgetState),
                 eq(initialPacingState),
                 eq(SAMPLE_RATE),
-                eq(PacingObservation.empty())
+                eq(PacingObservation.empty()),
+                eq(0.5)
         )).thenReturn(passResult(initialPacingState));
         when(decisionContextQueryGateway.find(
                 CAMPAIGN_ID,
@@ -192,7 +193,8 @@ class PacingDecisionServiceTest {
                 eq(budgetState),
                 eq(initialPacingState),
                 eq(SAMPLE_RATE),
-                eq(PacingObservation.empty())
+                eq(PacingObservation.empty()),
+                eq(0.5)
         );
         verify(storageAvailabilityMonitor).recordSuccess(
                 StorageType.REDIS,
@@ -216,7 +218,8 @@ class PacingDecisionServiceTest {
                 eq(budgetState),
                 eq(initialPacingState),
                 eq(SAMPLE_RATE),
-                eq(PacingObservation.empty())
+                eq(PacingObservation.empty()),
+                eq(0.5)
         );
         verify(storageAvailabilityMonitor).recordSuccess(
                 StorageType.REDIS,
@@ -250,11 +253,14 @@ class PacingDecisionServiceTest {
                 new PacingStateSnapshot(dueState, 1L);
         PacingObservation observation =
                 new PacingObservation(
-                        6,
-                        600L,
-                        120L,
-                        24L,
-                        new Money(24_000L)
+                        java.util.List.of(
+                                interval(100L, 20L, 4L, 4_000L),
+                                interval(100L, 20L, 4L, 4_000L),
+                                interval(100L, 20L, 4L, 4_000L),
+                                interval(100L, 20L, 4L, 4_000L),
+                                interval(100L, 20L, 4L, 4_000L),
+                                interval(100L, 20L, 4L, 4_000L)
+                        )
                 );
 
         when(pacingStateGateway.getOrInitialize(
@@ -271,7 +277,8 @@ class PacingDecisionServiceTest {
                 eq(budgetState),
                 eq(dueState),
                 eq(SAMPLE_RATE),
-                eq(observation)
+                eq(observation),
+                eq(0.5)
         )).thenReturn(passResult(dueState));
 
         service.decide(command);
@@ -286,7 +293,14 @@ class PacingDecisionServiceTest {
                 eq(budgetState),
                 eq(dueState),
                 eq(SAMPLE_RATE),
-                eq(observation)
+                eq(observation),
+                eq(0.5)
+        );
+        verify(pacingApiMetrics).recordPacingRateUpdate(
+                PacingStrategy.EVEN,
+                observation,
+                INITIAL_RATE.value(),
+                Duration.ofSeconds(10)
         );
     }
 
@@ -305,7 +319,8 @@ class PacingDecisionServiceTest {
                 eq(budgetState),
                 eq(initialPacingState),
                 eq(SAMPLE_RATE),
-                any(PacingObservation.class)
+                any(PacingObservation.class),
+                eq(0.5)
         )).thenReturn(exhausted);
 
         service.decide(command);
@@ -385,7 +400,8 @@ class PacingDecisionServiceTest {
                 eq(budgetState),
                 eq(initialPacingState),
                 sampleCaptor.capture(),
-                any(PacingObservation.class)
+                any(PacingObservation.class),
+                eq(0.5)
         );
 
         List<Rate> samples = sampleCaptor.getAllValues();
@@ -416,7 +432,8 @@ class PacingDecisionServiceTest {
                 eq(budgetState),
                 eq(initialPacingState),
                 eq(SAMPLE_RATE),
-                any(PacingObservation.class)
+                any(PacingObservation.class),
+                eq(0.5)
         )).thenReturn(passResult(changedState));
         when(pacingStateGateway.compareAndSet(
                 CAMPAIGN_ID,
@@ -462,7 +479,8 @@ class PacingDecisionServiceTest {
                 eq(budgetState),
                 eq(initialPacingState),
                 eq(SAMPLE_RATE),
-                any(PacingObservation.class)
+                any(PacingObservation.class),
+                eq(0.5)
         )).thenReturn(passResult(firstChangedState));
         when(pacingEngine.decide(
                 any(PacingRequest.class),
@@ -470,7 +488,8 @@ class PacingDecisionServiceTest {
                 eq(latestBudgetState),
                 eq(latestState),
                 eq(SAMPLE_RATE),
-                any(PacingObservation.class)
+                any(PacingObservation.class),
+                eq(0.5)
         )).thenReturn(passResult(secondChangedState));
         when(pacingStateGateway.compareAndSet(
                 CAMPAIGN_ID,
@@ -493,7 +512,8 @@ class PacingDecisionServiceTest {
                 eq(latestBudgetState),
                 eq(latestState),
                 eq(SAMPLE_RATE),
-                any(PacingObservation.class)
+                any(PacingObservation.class),
+                eq(0.5)
         );
     }
 
@@ -514,7 +534,8 @@ class PacingDecisionServiceTest {
                 eq(budgetState),
                 any(PacingState.class),
                 eq(SAMPLE_RATE),
-                any(PacingObservation.class)
+                any(PacingObservation.class),
+                eq(0.5)
         )).thenReturn(passResult(changedState));
         when(pacingStateGateway.compareAndSet(
                 eq(CAMPAIGN_ID),
@@ -536,7 +557,8 @@ class PacingDecisionServiceTest {
                 eq(budgetState),
                 any(PacingState.class),
                 sampleCaptor.capture(),
-                any(PacingObservation.class)
+                any(PacingObservation.class),
+                eq(0.5)
         );
         assertThat(sampleCaptor.getAllValues())
                 .containsExactly(SAMPLE_RATE, SAMPLE_RATE);
@@ -559,7 +581,8 @@ class PacingDecisionServiceTest {
                 eq(budgetState),
                 any(PacingState.class),
                 eq(SAMPLE_RATE),
-                any(PacingObservation.class)
+                any(PacingObservation.class),
+                eq(0.5)
         )).thenReturn(passResult(changedState));
         when(pacingStateGateway.compareAndSet(
                 eq(CAMPAIGN_ID),
@@ -619,7 +642,8 @@ class PacingDecisionServiceTest {
                 eq(budgetState),
                 eq(initialPacingState),
                 eq(SAMPLE_RATE),
-                any(PacingObservation.class)
+                any(PacingObservation.class),
+                eq(0.5)
         )).thenReturn(blockResult);
         BudgetState before = budgetState;
 
@@ -655,7 +679,8 @@ class PacingDecisionServiceTest {
                         ZoneId.of("Asia/Seoul"),
                         1.0,
                         2.0
-                )
+                ),
+                0.5
         );
     }
 
@@ -678,4 +703,18 @@ class PacingDecisionServiceTest {
                 state
         );
     }
+    private PacingObservation.Interval interval(
+            long decisionCount,
+            long passCount,
+            long reservationCount,
+            long reservedAmount
+    ) {
+        return new PacingObservation.Interval(
+                decisionCount,
+                passCount,
+                reservationCount,
+                new Money(reservedAmount)
+        );
+    }
+
 }
